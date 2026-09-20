@@ -290,11 +290,55 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
     rationale: 'Founder background and execution capacity are expected across all stages.',
   };
 
-  // 16. Capital Plan & Ask
-  expectations['capitalPlan'] = {
-    dimension: 'Fundraising Ask & Milestone Plan',
+  // 16. Fundraising Ask, Milestone Alignment & Capital Plan
+  expectations['fundraisingAsk'] = {
+    dimension: 'Fundraising Ask',
     status: 'EXPECTED',
-    rationale: `Stating the capital requested and milestone allocation is expected in fundraising decks (${stage !== 'unknown' ? stage : 'all'} stage).`,
+    rationale: 'Stating the exact round size or capital requested is expected across all fundraising decks.',
+  };
+
+  if (stage === 'unknown') {
+    expectations['milestonePlan'] = {
+      dimension: 'Milestone Alignment Plan',
+      status: 'UNKNOWN',
+      rationale: 'Declared fundraising stage is unknown, so stage-specific milestone expectations cannot be inferred.',
+    };
+  } else if (stage === 'pre_seed') {
+    expectations['milestonePlan'] = {
+      dimension: 'Milestone Alignment Plan',
+      status: 'EXPECTED',
+      rationale: 'Pre-seed capital must map directly to initial technical de-risking, prototype completion, or early validation milestones.',
+    };
+  } else if (stage === 'seed') {
+    expectations['milestonePlan'] = {
+      dimension: 'Milestone Alignment Plan',
+      status: 'EXPECTED',
+      rationale: 'Seed capital must map to establishing evidence of repeatability or business-specific commercial/technical de-risking.',
+    };
+  } else if (stage === 'series_a') {
+    expectations['milestonePlan'] = {
+      dimension: 'Milestone Alignment Plan',
+      status: 'EXPECTED',
+      rationale: 'Series A capital plan must connect to scaling repeatable acquisition, expanding go-to-market channels, or major commercial/clinical milestones.',
+    };
+  } else if (stage === 'series_b_plus') {
+    expectations['milestonePlan'] = {
+      dimension: 'Milestone Alignment Plan',
+      status: 'EXPECTED',
+      rationale: 'Series B+ capital deployment must detail scaling mechanics, international expansion, and organizational capacity.',
+    };
+  } else {
+    expectations['milestonePlan'] = {
+      dimension: 'Milestone Alignment Plan',
+      status: 'RELEVANT',
+      rationale: 'Capital allocation must align with the current operational trajectory and de-risking goals.',
+    };
+  }
+
+  expectations['capitalPlan'] = {
+    dimension: 'Capital Plan & Runway',
+    status: 'EXPECTED',
+    rationale: 'Providing a clear budget breakdown, runway projection, or use of funds is expected in fundraising decks.',
   };
 
   // 17. Archetype-Specific Expectations: Marketplace Liquidity

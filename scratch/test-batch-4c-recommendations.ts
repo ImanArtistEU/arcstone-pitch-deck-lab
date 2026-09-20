@@ -371,7 +371,7 @@ function runTests() {
     mockEvaluation,
     mockSimulator
   );
-  assert((signals as any).unsupportedClaimCount >= 1 || (signals as any).unsupportedClaimsCount >= 1 || true, 'Test A.1: TAM unsupported signal detected');
+  assert((signals as any).unsupportedClaimsCount >= 1, 'Test A.1: TAM unsupported signal detected');
 
   const deterministicResult = generateDeterministicRecommendations(
     mockProfile,

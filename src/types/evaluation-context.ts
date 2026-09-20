@@ -43,7 +43,9 @@ export type BusinessModelArchetype =
   | 'deeptech'
   | 'hardware'
   | 'biotech_healthtech'
+  /** @deprecated Legacy value; technology category is tracked separately in TechnologyCategory */
   | 'ai_infrastructure'
+  /** @deprecated Legacy value; technology category is tracked separately in TechnologyCategory */
   | 'ai_application'
   | 'services_enabled_software'
   | 'transactional'

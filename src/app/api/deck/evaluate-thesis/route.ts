@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { formatCompanyEvaluationContextForPrompt, formatEvaluationExpectationsForPrompt } from '@/lib/deck/prompt-formatter';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 
 /**
@@ -199,11 +200,7 @@ Context Warnings: ${Array.isArray(evaluationContext?.contextWarnings) ? evaluati
       ? slideEvidence.map((s: { pageNumber: number; text: string }) => `Slide ${s.pageNumber}: ${s.text}`).join('\n\n')
       : 'No slide evidence available.';
 
-    const expectationsContext = evaluationExpectations?.expectations
-      ? Object.entries(evaluationExpectations.expectations as Record<string, { dimension: string; status: string; rationale: string }>)
-          .map(([_, v]) => `- ${v.dimension}: ${v.status} (${v.rationale})`)
-          .join('\n')
-      : 'No expectation policy provided.';
+    const expectationsContext = formatEvaluationExpectationsForPrompt(evaluationExpectations);
 
     const ai = new GoogleGenAI({ apiKey });
 

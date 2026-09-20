@@ -8,6 +8,7 @@ import { StartupProfile, ProfileField } from '../src/types/startup';
 import { generateDeterministicEvaluation, executeFundraisingEvaluation } from '../src/lib/deck/thesis-evaluator';
 import { generateDeterministicRecommendations, executeRecommendationGeneration } from '../src/lib/deck/recommendations-engine';
 import { executeInvestorSimulation } from '../src/lib/deck/simulator-engine';
+import { formatCompanyEvaluationContextForPrompt, formatEvaluationExpectationsForPrompt } from '../src/lib/deck/prompt-formatter';
 import { HybridDeckResult } from '../src/types/deck';
 
 function pf(rawValue: string, slideNumber?: number): ProfileField<string> {
@@ -430,16 +431,19 @@ describe('Batch 5A.1 - Evaluation Context & Expectation Policy Integration Suite
   });
 
   // 52. Immutability Test
-  it('52. Context objects can be frozen with Object.freeze and inspected without error', () => {
-    const profile = {
+  it('52. Input profile object is not mutated by buildCompanyEvaluationContext', () => {
+    const profileInput = {
       fundraising: { currentStage: pf('Seed', 1) },
       traction: { ARR: pf('€300k ARR', 2) },
     } as unknown as StartupProfile;
-    const context = buildCompanyEvaluationContext(profile, null, null);
-    const frozenContext = Object.freeze(context);
 
-    expect(frozenContext.declaredStage.normalizedStage).toBe('seed');
-    expect(Object.isFrozen(frozenContext)).toBe(true);
+    const snapshot = JSON.parse(JSON.stringify(profileInput));
+    Object.freeze(profileInput);
+
+    const context = buildCompanyEvaluationContext(profileInput, null, null);
+
+    expect(profileInput).toEqual(snapshot);
+    expect(context.declaredStage.normalizedStage).toBe('seed');
   });
 
   // 53-55. Orchestrator Integration & Fetch Payload Verification
@@ -489,5 +493,113 @@ describe('Batch 5A.1 - Evaluation Context & Expectation Policy Integration Suite
 
     expect(body.evaluationContext).toBeDefined();
     expect(body.evaluationExpectations).toBeDefined();
+  });
+
+  // 56-57. Prompt Formatter Contract Tests
+  it('56. formatCompanyEvaluationContextForPrompt outputs canonical context properties accurately', () => {
+    const profile = {
+      fundraising: { currentStage: pf('Series A Round') },
+      businessModel: { revenueModel: pf('B2B SaaS Subscription') },
+      customerICP: { customerType: pf('Enterprise') },
+      goToMarket: { salesMotion: pf('Enterprise Sales') },
+      traction: { ARR: pf('€1.5M ARR') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    const formatted = formatCompanyEvaluationContextForPrompt(context);
+
+    expect(formatted).toContain('Declared Stage: series_a (raw: "Series A Round")');
+    expect(formatted).toContain('Economic Business Model Archetype: enterprise_software');
+    expect(formatted).toContain('Customer ICP Model: enterprise');
+    expect(formatted).toContain('Sales / Go-To-Market Motion: enterprise_sales');
+    expect(formatted).toContain('Functional Maturity:');
+  });
+
+  it('57. formatEvaluationExpectationsForPrompt formats expectations with status and rationales', () => {
+    const profile = {
+      fundraising: { currentStage: pf('Pre-Seed') },
+      problemSolution: { productDescription: pf('Prototype app') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    const expectations = buildEvaluationExpectations(context);
+    const formatted = formatEvaluationExpectationsForPrompt(expectations);
+
+    expect(formatted).toContain('Problem Evidence: EXPECTED');
+    expect(formatted).toContain('Unit Economics: NOT_YET_EXPECTED');
+  });
+
+  // 58-60. Maturity & Repeatability Regression Tests
+  it('58. €1.2M ARR without retention/durability or channel evidence does NOT become repeatable_growth', () => {
+    const profile = {
+      traction: { ARR: pf('€1.2M ARR'), customerCount: pf('10 customers'), growthRates: pf('100% YoY') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).toBe('emerging_repeatability');
+    expect(context.observedMaturity.value).not.toBe('repeatable_growth');
+  });
+
+  it('59. 10 pilots does NOT behave like paid customers', () => {
+    const profile = {
+      traction: { customerCount: pf('10 pilots') },
+      problemSolution: { productDescription: pf('Beta software') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).toBe('early_market_evidence');
+    expect(context.observedMaturity.value).not.toBe('emerging_repeatability');
+  });
+
+  it('60. $10M revenue without durability/retention evidence does NOT become scaling', () => {
+    const profile = {
+      traction: { ARR: pf('$10M ARR'), customerCount: pf('5 customers') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(['early_market_evidence', 'emerging_repeatability']).toContain(context.observedMaturity.value);
+    expect(context.observedMaturity.value).not.toBe('scaling');
+  });
+
+  // 61-64. Business Model & Regulatory Conservatism Tests
+  it('61. Subscription monetization without buyer evidence is classified as other with explicit basis', () => {
+    const profile = {
+      businessModel: { revenueModel: pf('Subscription model') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.businessModel.primaryArchetype).toBe('other');
+    expect(context.businessModel.basis.some((b) => b.includes('buyer model insufficiently established'))).toBe(true);
+  });
+
+  it('62. B2C subscription is classified as consumer archetype', () => {
+    const profile = {
+      businessModel: { revenueModel: pf('Subscription model') },
+      customerICP: { customerType: pf('B2C Consumer App Users') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.businessModel.primaryArchetype).toBe('consumer');
+  });
+
+  it('63. AI marketplace is classified as marketplace economic archetype + ai_application technology category', () => {
+    const profile = {
+      businessModel: { revenueModel: pf('15% Marketplace commission') },
+      technology: { coreTechnology: pf('Generative AI LLM matching') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.businessModel.primaryArchetype).toBe('marketplace');
+    expect(context.businessModel.technologyCategory).toBe('ai_application');
+    expect(context.businessModel.primaryArchetype as string).not.toBe('ai_application');
+  });
+
+  it('64. Software without domain evidence defaults regulatoryIntensity to unknown', () => {
+    const profile = {
+      problemSolution: { valueProposition: pf('B2B SaaS workflow automation') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.capitalRegulatory.regulatoryIntensity).toBe('unknown');
   });
 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { formatCompanyEvaluationContextForPrompt, formatEvaluationExpectationsForPrompt } from '@/lib/deck/prompt-formatter';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 
 /**
@@ -174,7 +175,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { profile, claims, diagnostics, evaluation, selectedTriggers, stage, evaluationContext } = body;
+    const { profile, claims, diagnostics, evaluation, selectedTriggers, stage, evaluationContext, evaluationExpectations } = body;
 
     const declaredStage = evaluationContext?.declaredStage?.normalizedStage || stage || profile?.fundraising?.currentStage?.rawValue || 'unknown';
     const observedMaturity = evaluationContext?.observedMaturity?.value || 'unknown';
@@ -210,14 +211,19 @@ STRICT INSTRUCTIONS:
    - WEAKLY_SUPPORTED: Only ungrounded assertions exist.
    - UNANSWERED: The necessary information is completely missing from the deck.
    - CONTRADICTORY: Conflicting statements exist across slides.
-4. CONTEXT & MATURITY ADAPTATION:
-   - Declared Stage: "${declaredStage}"
-   - Observed Operating Maturity: "${observedMaturity}"
-   - Business Model Archetype: "${archetype}"
-   - Pre-product / concept validation: Focus on customer pain severity, early pilot proof, founder wedge, and customer validation. Do NOT demand NRR or Series A metrics.
-   - Emerging repeatability / scaling: Scrutinize unit economics, sales repeatability, retention cohorts, pipeline conversion, and scalability.
-   - Marketplace archetype: Focus on supply/demand liquidity, take rate, and repeat transactions.
-   - Developer tools archetype: Focus on developer adoption, API call volume, and SDK conversion.
+4. CONTEXT & EXPECTATION ADAPTATION:
+EVALUATION CONTEXT:
+${formatCompanyEvaluationContextForPrompt(evaluationContext)}
+
+EXPECTATION POLICY:
+${formatEvaluationExpectationsForPrompt(evaluationExpectations)}
+
+EXPECTATION RULES FOR QA GENERATION:
+- Respect the assigned expectation status for each dimension above.
+- If a dimension status is 'NOT_YET_EXPECTED' (e.g. retention cohorts for concept/early-product startups), DO NOT generate high-priority due diligence questions demanding mature metrics for that area.
+- If a dimension status is 'EXPECTED' or 'RELEVANT' (e.g. marketplace liquidity for marketplaces, developer adoption for developer tools), focus questions on those relevant operational mechanics.
+- If a dimension status is 'NOT_APPLICABLE' (e.g. clinical trials for software, or marketplace liquidity for pure SaaS), DO NOT generate questions for that non-applicable area.
+- If a dimension status is 'UNKNOWN', do not treat the absence of data as a proven flaw or generate false assumptions.
 5. FOLLOW-UP QUESTIONS:
    - Include at most 2 logical, high-impact follow-ups per primary question.
 6. QUANTITY:

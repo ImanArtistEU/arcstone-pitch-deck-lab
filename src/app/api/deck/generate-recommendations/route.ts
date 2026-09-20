@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { formatCompanyEvaluationContextForPrompt, formatEvaluationExpectationsForPrompt } from '@/lib/deck/prompt-formatter';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 
 /**
@@ -256,12 +257,17 @@ CRITICAL OPERATIONAL RULES:
 
 TOTAL SLIDES IN DECK: ${totalPages}
 
-EVALUATION CONTEXT & EXPECTATIONS:
-Stage: ${evaluationContext?.declaredStage?.rawStage || 'unknown'} (revenue maturity: ${evaluationContext?.operatingMaturity?.revenueMaturity || 'unknown'})
-Archetype: ${evaluationContext?.businessModelContext?.primaryArchetype || 'unknown'} (Tech: ${evaluationContext?.businessModelContext?.technologyCategory || 'unknown'})
-Sales Motion: ${evaluationContext?.goToMarketContext?.salesMotion || 'unknown'}
-Capital Intensity: ${evaluationContext?.intensityProfile?.capitalIntensity || 'unknown'}, Regulatory Intensity: ${evaluationContext?.intensityProfile?.regulatoryIntensity || 'unknown'}
-Summary Expectations: ${JSON.stringify(evaluationExpectations?.summary || {})}
+COMPANY EVALUATION CONTEXT:
+${formatCompanyEvaluationContextForPrompt(evaluationContext)}
+
+EVALUATION EXPECTATIONS & MATURITY RULES:
+${formatEvaluationExpectationsForPrompt(evaluationExpectations)}
+
+EXPECTATION ADAPTATION INSTRUCTIONS FOR RECOMMENDATIONS:
+- Respect the assigned expectation statuses above.
+- Do NOT generate recommendations demanding metrics or proof for areas marked as 'NOT_YET_EXPECTED' or 'NOT_APPLICABLE'.
+- Missing metrics for 'NOT_YET_EXPECTED' or 'NOT_APPLICABLE' dimensions must NEVER become recommendation gaps.
+- Focus recommendations on gaps in dimensions marked as 'EXPECTED' or 'RELEVANT'.
 
 STARTUP PROFILE SUMMARY:
 Company: ${profile?.identity?.companyName?.rawValue || 'Unknown'}
