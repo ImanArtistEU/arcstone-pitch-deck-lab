@@ -94,7 +94,57 @@ function normalizeStage(rawStage?: string): DeclaredStageContext {
  * Evaluates observed operating maturity conservatively based strictly on deck facts.
  * Paid customers, pilots/LOIs, free users, and retention metrics are explicitly distinguished.
  */
-function evaluateObservedMaturity(
+/**
+ * Deterministic helper to identify explicitly non-paying customer language.
+ * Recognizes terms such as: pilot, trial, LOI, letter of intent, waitlist, free, free user, signup, registered user, user.
+ */
+export function isExplicitlyNonPayingCustomerText(text?: string): boolean {
+  if (!text) return false;
+  const s = text.toLowerCase();
+  return (
+    s.includes('pilot') ||
+    s.includes('trial') ||
+    s.includes('loi') ||
+    s.includes('letter of intent') ||
+    s.includes('waitlist') ||
+    s.includes('free') ||
+    s.includes('signup') ||
+    s.includes('registered user') ||
+    s.includes('user')
+  );
+}
+
+/**
+ * Validates whether a raw customer field string represents valid paid/commercial customer evidence.
+ * Rejects empty, zero, not_found, none, or any explicitly non-paying customer vocabulary.
+ */
+export function isValidPaidCustomerValue(val?: string): boolean {
+  if (!val) return false;
+  const s = val.trim().toLowerCase();
+  if (
+    s === '' ||
+    s === '0' ||
+    s === '0 customers' ||
+    s === '0 paid' ||
+    s === '0 paying' ||
+    s === 'not_found' ||
+    s === 'none' ||
+    s === 'no customers' ||
+    s === 'no paid customers'
+  ) {
+    return false;
+  }
+  if (isExplicitlyNonPayingCustomerText(s)) {
+    return false;
+  }
+  const match = s.match(/(\d+)/);
+  return match ? parseInt(match[1], 10) > 0 : true;
+}
+
+/**
+ * Evaluates operating maturity conservatively strictly based on extracted profile facts.
+ */
+export function evaluateObservedMaturity(
   profile: StartupProfile | null,
   claimMap: ClaimEvidenceMap | null
 ): ObservedMaturityContext {
@@ -113,35 +163,22 @@ function evaluateObservedMaturity(
 
   const parsedARR = parseMonetaryAmount(arrVal || revVal || mrrVal);
 
-  const rawCustStr = (custVal || '').toLowerCase();
-  const rawPaidCustStr = (paidCustVal || '').toLowerCase();
+  const rawCustStr = custVal || '';
+  const rawPaidCustStr = paidCustVal || '';
 
-  const custCountMatch = (custVal || '').match(/(\d+)/);
+  const custCountMatch = rawCustStr.match(/(\d+)/);
   const parsedCustCount = custCountMatch ? parseInt(custCountMatch[1], 10) : null;
 
-  const paidCustMatch = (paidCustVal || '').match(/(\d+)/);
+  const paidCustMatch = rawPaidCustStr.match(/(\d+)/);
   const parsedPaidCustCount = paidCustMatch ? parseInt(paidCustMatch[1], 10) : null;
 
-  const isPilotOrLoi =
-    rawCustStr.includes('pilot') ||
-    rawCustStr.includes('loi') ||
-    rawCustStr.includes('letter of intent') ||
-    rawCustStr.includes('waitlist') ||
-    rawCustStr.includes('free user') ||
-    rawCustStr.includes('trial') ||
-    rawCustStr.includes('signup') ||
-    rawCustStr.includes('user') ||
-    rawPaidCustStr.includes('pilot') ||
-    rawPaidCustStr.includes('trial') ||
-    rawPaidCustStr.includes('loi');
+  const isPilotOrLoi = isExplicitlyNonPayingCustomerText(rawCustStr) || isExplicitlyNonPayingCustomerText(rawPaidCustStr);
 
   const hasRevenue = parsedARR.annualAmount !== null && parsedARR.annualAmount > 0;
 
-  // Distinguish verified paid customers from pilots, LOIs, trials, or free users.
-  // Revenue existing elsewhere does NOT transform pilot count semantics into paid customers.
-  const hasPaidCustomers =
-    (parsedPaidCustCount !== null && parsedPaidCustCount > 0 && !rawPaidCustStr.includes('pilot') && !rawPaidCustStr.includes('trial')) ||
-    (parsedCustCount !== null && parsedCustCount > 0 && !isPilotOrLoi);
+  // Distinguish verified paid customers from pilots, LOIs, trials, free users, or non-paying users.
+  // Revenue existing elsewhere does NOT transform pilot/non-paying count semantics into paid customers.
+  const hasPaidCustomers = isValidPaidCustomerValue(paidCustVal) || isValidPaidCustomerValue(custVal);
 
   const hasPilotsOrUsers =
     isPilotOrLoi ||
@@ -545,19 +582,8 @@ function evaluateFunctionalMaturity(
   }
 
   let tractionMaturity: FunctionalMaturity['tractionMaturity'] = 'unknown';
-  const rawCustStr = (custVal || '').toLowerCase();
-  const isPilotOrLoiText = rawCustStr.includes('pilot') || rawCustStr.includes('loi') || rawCustStr.includes('waitlist') || rawCustStr.includes('trial');
-
-  const isValidPaidVal = (val?: string) => {
-    if (!val) return false;
-    const s = val.trim().toLowerCase();
-    if (s === '' || s === '0' || s === '0 customers' || s === '0 paid' || s === 'not_found' || s === 'none' || s === 'no customers') return false;
-    if (s.includes('pilot') || s.includes('loi') || s.includes('waitlist') || s.includes('trial') || s.includes('signup')) return false;
-    const match = s.match(/(\d+)/);
-    return match ? parseInt(match[1], 10) > 0 : true;
-  };
-
-  const hasValidPaidCustomers = isValidPaidVal(paidCustVal) || (isValidPaidVal(custVal) && !isPilotOrLoiText);
+  const isPilotOrLoiText = isExplicitlyNonPayingCustomerText(custVal) || isExplicitlyNonPayingCustomerText(paidCustVal);
+  const hasValidPaidCustomers = isValidPaidCustomerValue(paidCustVal) || isValidPaidCustomerValue(custVal);
 
   if (observedMaturity === 'scaling') {
     tractionMaturity = 'scale';
@@ -587,14 +613,20 @@ function evaluateFunctionalMaturity(
     const pLower = prodText.toLowerCase();
     if (pLower.includes('multi-tenant') && pLower.includes('deployed at scale') && pLower.includes('sla')) {
       productMaturity = 'mature_platform';
-    } else if (pLower.includes('live') || pLower.includes('production') || pLower.includes('deployed') || pLower.includes('available')) {
+    } else if (
+      pLower.includes('live') ||
+      pLower.includes('production') ||
+      pLower.includes('deployed') ||
+      pLower.includes('commercially available') ||
+      pLower.includes('in production')
+    ) {
       productMaturity = 'in_production';
     } else if (pLower.includes('mvp') || pLower.includes('beta') || pLower.includes('prototype')) {
       productMaturity = 'prototype_mvp';
     } else if (pLower.includes('concept') || pLower.includes('design')) {
       productMaturity = 'concept_or_design';
     } else {
-      productMaturity = 'in_production';
+      productMaturity = 'unknown';
     }
   }
 

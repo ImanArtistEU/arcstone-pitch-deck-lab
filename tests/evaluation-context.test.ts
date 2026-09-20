@@ -752,4 +752,105 @@ describe('Batch 5A.1 - Evaluation Context & Expectation Policy Integration Suite
     expect(context.companyCategory).toBe('unknown');
     expect(context.companyCategory).not.toBe('Software / Technology');
   });
+
+  // 78-87. Final Evaluation Context Hotfix Tests
+  it('78. Generic product description returns productMaturity = unknown', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('Our SaaS automates procurement') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.productMaturity).toBe('unknown');
+  });
+
+  it('79. "AI platform for finance teams" is not in_production', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('AI platform for finance teams') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.productMaturity).not.toBe('in_production');
+    expect(context.functionalMaturity.productMaturity).toBe('unknown');
+  });
+
+  it('80. "Enterprise-grade workflow software" is not in_production', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('Enterprise-grade workflow software') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.productMaturity).not.toBe('in_production');
+    expect(context.functionalMaturity.productMaturity).toBe('unknown');
+  });
+
+  it('81. Explicit deployed production description = in_production', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('Currently deployed in production across 40 customers') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.productMaturity).toBe('in_production');
+  });
+
+  it('82. paidCustomerCount "10 LOIs" is not paid evidence', () => {
+    const profile = {
+      traction: { paidCustomerCount: pf('10 LOIs') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).not.toBe('emerging_repeatability');
+    expect(context.functionalMaturity.tractionMaturity).toBe('pilots_or_loi');
+  });
+
+  it('83. paidCustomerCount "20 pilots" is not paid evidence', () => {
+    const profile = {
+      traction: { paidCustomerCount: pf('20 pilots') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).not.toBe('emerging_repeatability');
+    expect(context.functionalMaturity.tractionMaturity).toBe('pilots_or_loi');
+  });
+
+  it('84. paidCustomerCount "500 free users" is not paid evidence', () => {
+    const profile = {
+      traction: { paidCustomerCount: pf('500 free users') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).not.toBe('emerging_repeatability');
+    expect(context.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+  });
+
+  it('85. paidCustomerCount "12 paying customers" is paid evidence', () => {
+    const profile = {
+      traction: { paidCustomerCount: pf('12 paying customers') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.tractionMaturity).toBe('early_customers');
+  });
+
+  it('86. customerCount "500 users" does not become paid-customer evidence', () => {
+    const profile = {
+      traction: { customerCount: pf('500 users') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+    expect(context.observedMaturity.value).toBe('early_market_evidence');
+  });
+
+  it('87. observed and functional maturity use consistent non-paying semantics', () => {
+    const profile = {
+      traction: {
+        customerCount: pf('15 pilot customers'),
+        paidCustomerCount: pf('15 pilots'),
+      },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).toBe('early_market_evidence');
+    expect(context.functionalMaturity.tractionMaturity).toBe('pilots_or_loi');
+  });
 });
