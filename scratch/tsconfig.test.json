@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./dist",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022"
+  },
+  "include": [
+    "test-batch-4a-evaluation.ts",
+    "test-batch-4b-simulator.ts",
+    "test-batch-4c-recommendations.ts",
+    "../src/**/*"
+  ]
+}
+
