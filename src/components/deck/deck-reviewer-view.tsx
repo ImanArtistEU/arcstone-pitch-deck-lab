@@ -7,6 +7,7 @@ import { StartupProfile } from '@/types/startup';
 import { ClaimEvidenceMap } from '@/types/claim';
 import { DeckDiagnostics } from '@/types/diagnostics';
 import { FundraisingEvaluation } from '@/types/evaluation';
+import { InvestmentCase } from '@/types/investment-case';
 import { InvestorSimulatorResult, SimulatorStatus } from '@/types/simulator';
 import { ActionPlanResult, RecommendationsStatus } from '@/types/recommendations';
 
@@ -16,6 +17,7 @@ import { extractStartupProfile } from '@/lib/deck/startup-extractor';
 import { extractClaimEvidenceMap } from '@/lib/deck/claim-extractor';
 import { executeDeckDiagnostics } from '@/lib/deck/diagnostics-engine';
 import { executeFundraisingEvaluation } from '@/lib/deck/thesis-evaluator';
+import { executeInvestmentCaseReconstruction } from '@/lib/deck/investment-case-orchestrator';
 import { executeInvestorSimulation } from '@/lib/deck/simulator-engine';
 import { executeRecommendationGeneration } from '@/lib/deck/recommendations-engine';
 
@@ -23,6 +25,7 @@ import { executeRecommendationGeneration } from '@/lib/deck/recommendations-engi
 import { ReviewHeader } from './review/review-header';
 import { ReviewNav, ReviewTab } from './review/review-nav';
 import { OverviewView } from './review/overview-view';
+import { InvestmentCaseView } from './review/investment-case-view';
 import { DeckReviewWorkspace } from './review/deck-review-workspace';
 import { ActionPlanView } from './review/action-plan-view';
 import { InvestorPrepView } from './review/investor-prep-view';
@@ -30,7 +33,7 @@ import { CompanyContextView } from './review/company-context-view';
 import { AdvancedEvidenceView } from './review/advanced-evidence-view';
 import { LoadingPipelineView } from './review/loading-pipeline-view';
 
-import { ArrowRight, Sparkles, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowRight, Sparkles, AlertCircle } from 'lucide-react';
 
 export function DeckReviewerView() {
   const [selectedFile, setSelectedFile] = useState<LocalDeckFile | null>(null);
@@ -64,6 +67,10 @@ export function DeckReviewerView() {
   const [fundraisingEvaluation, setFundraisingEvaluation] = useState<FundraisingEvaluation | null>(null);
   const [evaluationErrorMessage, setEvaluationErrorMessage] = useState<string | null>(null);
 
+  const [investmentCaseStatus, setInvestmentCaseStatus] = useState<'idle' | 'reconstructing' | 'success' | 'error'>('idle');
+  const [investmentCase, setInvestmentCase] = useState<InvestmentCase | null>(null);
+  const [investmentCaseErrorMessage, setInvestmentCaseErrorMessage] = useState<string | null>(null);
+
   const [simulatorStatus, setSimulatorStatus] = useState<SimulatorStatus>('idle');
   const [simulatorResult, setSimulatorResult] = useState<InvestorSimulatorResult | null>(null);
   const [simulatorErrorMessage, setSimulatorErrorMessage] = useState<string | null>(null);
@@ -96,6 +103,9 @@ export function DeckReviewerView() {
     setEvaluationStatus('idle');
     setFundraisingEvaluation(null);
     setEvaluationErrorMessage(null);
+    setInvestmentCaseStatus('idle');
+    setInvestmentCase(null);
+    setInvestmentCaseErrorMessage(null);
     setSimulatorStatus('idle');
     setSimulatorResult(null);
     setSimulatorErrorMessage(null);
@@ -110,7 +120,8 @@ export function DeckReviewerView() {
     claimMapData: ClaimEvidenceMap | null,
     diagnosticsData: DeckDiagnostics | null,
     evaluationData: FundraisingEvaluation | null,
-    simulatorData: InvestorSimulatorResult | null
+    simulatorData: InvestorSimulatorResult | null,
+    investmentCaseData: InvestmentCase | null
   ) => {
     if (!hybridResult) return;
 
@@ -123,7 +134,8 @@ export function DeckReviewerView() {
       claimMapData,
       diagnosticsData,
       evaluationData,
-      simulatorData
+      simulatorData,
+      investmentCaseData
     );
 
     if (runRes.result) {
@@ -143,7 +155,8 @@ export function DeckReviewerView() {
     profile: StartupProfile | null,
     claimMapData: ClaimEvidenceMap | null,
     diagnosticsData: DeckDiagnostics | null,
-    evaluationData: FundraisingEvaluation | null
+    evaluationData: FundraisingEvaluation | null,
+    investmentCaseData: InvestmentCase | null
   ) => {
     if (!hybridResult) return;
 
@@ -155,7 +168,8 @@ export function DeckReviewerView() {
       profile,
       claimMapData,
       diagnosticsData,
-      evaluationData
+      evaluationData,
+      investmentCaseData
     );
 
     let simData: InvestorSimulatorResult | null = null;
@@ -178,7 +192,57 @@ export function DeckReviewerView() {
       claimMapData,
       diagnosticsData,
       evaluationData,
-      simData
+      simData,
+      investmentCaseData
+    );
+  };
+
+  const runInvestmentCaseReconstruction = async (
+    hybridResult: typeof processingState.hybridResult,
+    profile: StartupProfile | null,
+    claimMapData: ClaimEvidenceMap | null,
+    diagnosticsData: DeckDiagnostics | null,
+    evaluationData: FundraisingEvaluation | null
+  ) => {
+    if (!hybridResult) return;
+
+    setInvestmentCaseStatus('reconstructing');
+    setInvestmentCaseErrorMessage(null);
+
+    const slideEv = (hybridResult.slides || []).map((s: HybridSlideData) => ({
+      slideNumber: s.pageNumber,
+      textContent: s.combinedEvidence?.normalizedText || s.nativeExtraction?.rawText || '',
+    }));
+
+    const result = await executeInvestmentCaseReconstruction(
+      profile,
+      claimMapData,
+      diagnosticsData,
+      evaluationData,
+      slideEv
+    );
+
+    let generatedCase: InvestmentCase | null = null;
+    if (result.investmentCase) {
+      setInvestmentCaseStatus('success');
+      setInvestmentCase(result.investmentCase);
+      generatedCase = result.investmentCase;
+      if (result.status === 'fallback') {
+        setInvestmentCaseErrorMessage('Reconstructed via conservative deterministic engine.');
+      }
+    } else {
+      setInvestmentCaseStatus('error');
+      setInvestmentCaseErrorMessage(result.errorMessage || 'Failed to reconstruct investment case.');
+    }
+
+    // Automatically trigger Investor Diligence Simulator
+    await runInvestorSimulation(
+      hybridResult,
+      profile,
+      claimMapData,
+      diagnosticsData,
+      evaluationData,
+      generatedCase
     );
   };
 
@@ -210,8 +274,8 @@ export function DeckReviewerView() {
       setEvaluationErrorMessage(result.errorMessage || 'Failed to complete fundraising evaluation.');
     }
 
-    // Automatically trigger Investor Diligence Simulator
-    await runInvestorSimulation(hybridResult, profile, claimMapData, diagnosticsData, generatedEval);
+    // Automatically trigger Investment Case Reconstruction
+    await runInvestmentCaseReconstruction(hybridResult, profile, claimMapData, diagnosticsData, generatedEval);
   };
 
   const runDiagnostics = async (
@@ -319,6 +383,9 @@ export function DeckReviewerView() {
     setEvaluationStatus('idle');
     setFundraisingEvaluation(null);
     setEvaluationErrorMessage(null);
+    setInvestmentCaseStatus('idle');
+    setInvestmentCase(null);
+    setInvestmentCaseErrorMessage(null);
     setSimulatorStatus('idle');
     setSimulatorResult(null);
     setSimulatorErrorMessage(null);
@@ -368,6 +435,7 @@ export function DeckReviewerView() {
     claimStatus === 'extracting' ||
     diagnosticStatus === 'analyzing' ||
     evaluationStatus === 'evaluating' ||
+    investmentCaseStatus === 'reconstructing' ||
     simulatorStatus === 'simulating' ||
     recommendationsStatus === 'generating';
 
@@ -446,6 +514,7 @@ export function DeckReviewerView() {
           claimStatus={claimStatus}
           diagnosticStatus={diagnosticStatus}
           evaluationStatus={evaluationStatus}
+          investmentCaseStatus={investmentCaseStatus}
           simulatorStatus={simulatorStatus}
           recommendationsStatus={recommendationsStatus}
         />
@@ -484,6 +553,10 @@ export function DeckReviewerView() {
                   onNavigateToActionPlan={handleNavigateToActionPlan}
                   onNavigateToInvestorPrep={handleNavigateToInvestorPrep}
                 />
+              )}
+
+              {activeNavTab === 'investment_case' && (
+                <InvestmentCaseView investmentCase={investmentCase} />
               )}
 
               {activeNavTab === 'deck_review' && (

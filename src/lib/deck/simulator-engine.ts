@@ -3,6 +3,7 @@ import { StartupProfile } from '@/types/startup';
 import { ClaimEvidenceMap } from '@/types/claim';
 import { DeckDiagnostics } from '@/types/diagnostics';
 import { FundraisingEvaluation } from '@/types/evaluation';
+import { InvestmentCase } from '@/types/investment-case';
 import {
   InvestorQuestion,
   InvestorSimulatorResult,
@@ -781,7 +782,8 @@ export async function executeInvestorSimulation(
   profile: StartupProfile | null,
   claimMap: ClaimEvidenceMap | null,
   diagnostics: DeckDiagnostics | null,
-  evaluation: FundraisingEvaluation | null
+  evaluation: FundraisingEvaluation | null,
+  investmentCase?: InvestmentCase | null
 ): Promise<SimulatorRunResult> {
   const totalPages = hybridResult.summary.totalPages;
   const validClaimIds = new Set<string>((claimMap?.claims || []).map((c) => c.id));
@@ -812,6 +814,7 @@ export async function executeInvestorSimulation(
         stage,
         evaluationContext,
         evaluationExpectations,
+        investmentCase: investmentCase || null,
       }),
     });
 

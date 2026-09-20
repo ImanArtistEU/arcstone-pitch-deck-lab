@@ -41,27 +41,106 @@ export function sanitizeText(text: string): string {
 /**
  * Helper to collect valid slide numbers from all available deck evidence.
  */
-function getValidSlideNumbers(
+export function getValidSlideNumbers(
   profile: StartupProfile | null,
   claimMap: ClaimEvidenceMap | null,
-  diagnostics: DeckDiagnostics | null
+  diagnostics: DeckDiagnostics | null,
+  slideEvidence?: Array<{ slideNumber?: number }> | null
 ): Set<number> {
   const slides = new Set<number>();
 
+  // 1. Profile evidence provenance
+  if (profile) {
+    const checkEv = (evList?: Array<{ slideNumber?: number }>) => {
+      for (const ev of evList || []) {
+        if (typeof ev?.slideNumber === 'number' && ev.slideNumber > 0) {
+          slides.add(ev.slideNumber);
+        }
+      }
+    };
+
+    const sections = [
+      profile.identity,
+      profile.fundraising,
+      profile.problemSolution,
+      profile.customerICP,
+      profile.businessModel,
+      profile.traction,
+      profile.goToMarket,
+      profile.market,
+      profile.competition,
+      profile.team,
+      profile.technology,
+    ];
+
+    for (const sec of sections) {
+      if (!sec) continue;
+      for (const key of Object.keys(sec)) {
+        const field = (sec as any)[key];
+        if (field && Array.isArray(field.evidence)) {
+          checkEv(field.evidence);
+        }
+      }
+    }
+
+    for (const f of profile.team?.founders || []) {
+      if (typeof f?.slideNumber === 'number' && f.slideNumber > 0) {
+        slides.add(f.slideNumber);
+      }
+    }
+
+    for (const fact of profile.importantFacts || []) {
+      if (typeof fact?.slideNumber === 'number' && fact.slideNumber > 0) {
+        slides.add(fact.slideNumber);
+      }
+    }
+  }
+
+  // 2. ClaimMap
   if (claimMap?.claims) {
     for (const c of claimMap.claims) {
       if (typeof c.slideNumber === 'number' && c.slideNumber > 0) {
         slides.add(c.slideNumber);
       }
+      for (const ev of c.evidence || []) {
+        if (typeof ev?.slideNumber === 'number' && ev.slideNumber > 0) {
+          slides.add(ev.slideNumber);
+        }
+      }
     }
   }
 
-  if (diagnostics?.contradictions) {
-    for (const c of diagnostics.contradictions) {
+  // 3. Diagnostics
+  if (diagnostics) {
+    for (const c of diagnostics.contradictions || []) {
       for (const st of c.conflictingStatements || []) {
         if (typeof st.slideNumber === 'number' && st.slideNumber > 0) {
           slides.add(st.slideNumber);
         }
+      }
+    }
+    for (const eg of diagnostics.evidenceGaps || []) {
+      for (const sn of eg.slideNumbers || []) {
+        if (typeof sn === 'number' && sn > 0) slides.add(sn);
+      }
+    }
+    for (const mi of diagnostics.missingInformation || []) {
+      for (const sn of mi.relatedSlideNumbers || []) {
+        if (typeof sn === 'number' && sn > 0) slides.add(sn);
+      }
+    }
+    for (const amb of diagnostics.ambiguities || []) {
+      if (typeof amb.slideNumber === 'number' && amb.slideNumber > 0) {
+        slides.add(amb.slideNumber);
+      }
+    }
+  }
+
+  // 4. Slide evidence
+  if (Array.isArray(slideEvidence)) {
+    for (const se of slideEvidence) {
+      if (typeof se?.slideNumber === 'number' && se.slideNumber > 0) {
+        slides.add(se.slideNumber);
       }
     }
   }
@@ -72,7 +151,7 @@ function getValidSlideNumbers(
 /**
  * Helper to collect valid claim IDs.
  */
-function getValidClaimIds(claimMap: ClaimEvidenceMap | null): Set<string> {
+export function getValidClaimIds(claimMap: ClaimEvidenceMap | null): Set<string> {
   const ids = new Set<string>();
   if (claimMap?.claims) {
     for (const c of claimMap.claims) {
@@ -83,55 +162,181 @@ function getValidClaimIds(claimMap: ClaimEvidenceMap | null): Set<string> {
 }
 
 /**
- * Reconstructs the Causal Investment Thesis from deck facts and context.
+ * Builds canonical evidence corpus from source deck artifacts.
+ */
+export function buildCanonicalEvidenceCorpus(
+  profile: StartupProfile | null,
+  claimMap: ClaimEvidenceMap | null,
+  diagnostics: DeckDiagnostics | null,
+  slideEvidence?: Array<{ textContent?: string; extractedText?: string; exactText?: string }> | null
+): Set<string> {
+  const corpus = new Set<string>();
+
+  const addText = (text?: string) => {
+    if (!text || typeof text !== 'string') return;
+    const trimmed = text.trim().toLowerCase();
+    if (trimmed.length > 2) corpus.add(trimmed);
+  };
+
+  if (profile) {
+    const sections = [
+      profile.identity,
+      profile.fundraising,
+      profile.problemSolution,
+      profile.customerICP,
+      profile.businessModel,
+      profile.traction,
+      profile.goToMarket,
+      profile.market,
+      profile.competition,
+      profile.team,
+      profile.technology,
+    ];
+    for (const sec of sections) {
+      if (!sec) continue;
+      for (const key of Object.keys(sec)) {
+        const field = (sec as any)[key];
+        if (field) {
+          addText(field.rawValue);
+          if (Array.isArray(field.evidence)) {
+            for (const ev of field.evidence) addText(ev.exactText);
+          }
+        }
+      }
+    }
+    for (const f of profile.team?.founders || []) {
+      addText(f.name);
+      addText(f.role);
+      addText(f.background);
+    }
+    for (const fact of profile.importantFacts || []) {
+      addText(fact.fact);
+    }
+  }
+
+  if (claimMap?.claims) {
+    for (const c of claimMap.claims) {
+      addText(c.claimText);
+      addText(c.normalizedClaim);
+      for (const ev of c.evidence || []) {
+        addText(ev.exactText);
+      }
+    }
+  }
+
+  if (diagnostics) {
+    for (const c of diagnostics.contradictions || []) {
+      addText(c.description);
+      for (const st of c.conflictingStatements || []) addText(st.text);
+    }
+    for (const eg of diagnostics.evidenceGaps || []) {
+      addText(eg.claimText);
+      addText(eg.missingEvidenceDescription);
+    }
+  }
+
+  if (Array.isArray(slideEvidence)) {
+    for (const se of slideEvidence) {
+      addText((se as any).textContent || (se as any).extractedText || (se as any).exactText);
+    }
+  }
+
+  return corpus;
+}
+
+/**
+ * Validates whether a text or metric string is supported by the canonical evidence corpus.
+ */
+export function isStringSupportedByCorpus(text: string, corpus: Set<string>): boolean {
+  if (!text || typeof text !== 'string') return false;
+  if (corpus.size === 0) return true; // If no corpus was constructed, defer to slide/claim ID filtering
+
+  const lower = text.trim().toLowerCase();
+  if (lower.length === 0) return false;
+
+  // Direct match
+  if (corpus.has(lower)) return true;
+
+  // Substring match
+  for (const item of corpus) {
+    if (item.includes(lower) || lower.includes(item)) return true;
+  }
+
+  // Metric extract check: if text contains numbers/currencies like "$10M" or "500", verify presence
+  const numbers = lower.match(/\b\d+([.,]\d+)?\b/g);
+  if (numbers && numbers.length > 0) {
+    for (const num of numbers) {
+      let numFound = false;
+      for (const item of corpus) {
+        if (item.includes(num)) {
+          numFound = true;
+          break;
+        }
+      }
+      if (!numFound) return false; // Contains numeric metric not present in corpus
+    }
+    return true;
+  }
+
+  return true;
+}
+
+/**
+ * Reconstructs the Causal Investment Thesis from deck facts and context without generic defaults.
  */
 function reconstructInvestmentThesis(
   profile: StartupProfile | null,
   context: CompanyEvaluationContext | null
 ): StructuredInvestmentThesis {
-  const prob = profile?.problemSolution?.problemStatement?.rawValue || 'Target market problem';
+  const prob = profile?.problemSolution?.problemStatement?.rawValue;
   const sol =
     profile?.problemSolution?.productDescription?.rawValue ||
-    profile?.problemSolution?.valueProposition?.rawValue ||
-    'Proposed solution approach';
-  const icp = profile?.customerICP?.customerType?.rawValue || 'Target customer segment';
+    profile?.problemSolution?.valueProposition?.rawValue;
+  const icp = profile?.customerICP?.customerType?.rawValue;
   const acvVal =
     profile?.businessModel?.pricingValues?.rawValue ||
-    profile?.businessModel?.revenueModel?.rawValue ||
-    'Monetization model';
-  const gtmVal = profile?.goToMarket?.salesMotion?.rawValue || 'Customer acquisition motion';
-  const mktVal = profile?.market?.TAM?.rawValue || 'Market opportunity';
-  const arrVal = profile?.traction?.ARR?.rawValue || profile?.traction?.revenue?.rawValue || 'Traction milestone';
-  const teamVal = profile?.team?.founders?.[0]?.background || 'Founding team execution capability';
+    profile?.businessModel?.revenueModel?.rawValue;
+  const gtmVal = profile?.goToMarket?.salesMotion?.rawValue;
+  const mktVal = profile?.market?.TAM?.rawValue;
+  const arrVal = profile?.traction?.ARR?.rawValue || profile?.traction?.revenue?.rawValue;
+  const teamVal = profile?.team?.founders?.[0]?.background;
 
-  const category = context?.companyCategory || 'technology startup';
-  const archetype = context?.businessModel.primaryArchetype || 'B2B SaaS';
-  const stage = context?.declaredStage.normalizedStage || 'seed';
+  const category = context?.companyCategory && context.companyCategory !== 'unknown' ? context.companyCategory : undefined;
+  const archetype = context?.businessModel?.primaryArchetype && context.businessModel.primaryArchetype !== 'unknown' ? context.businessModel.primaryArchetype : undefined;
+  const stage = context?.declaredStage?.normalizedStage && context.declaredStage.normalizedStage !== 'unknown' ? context.declaredStage.normalizedStage : undefined;
 
-  const statedThesis = sanitizeText(
-    `The deck asserts a ${category} solution addressing ${prob} for ${icp} via ${gtmVal}, claiming market opportunity of ${mktVal}.`
-  );
+  const hasCoreEvidence = Boolean(prob || icp || gtmVal || sol);
 
-  const reconstructedThesis = sanitizeText(
-    `If the company can acquire ${icp} via ${gtmVal}, convert initial adoption into recurring value under ${acvVal}, and retain customers through defensible product workflows, then it can scale from ${arrVal} into a persistent venture-scale business in ${mktVal}.`
-  );
+  const statedThesis = hasCoreEvidence
+    ? sanitizeText(
+        `The deck asserts a ${category || 'startup'} proposition solving ${prob || 'the target problem'} for ${icp || 'target customers'}${gtmVal ? ` via ${gtmVal}` : ''}${mktVal ? `, addressing ${mktVal}` : ''}.`
+      )
+    : 'The current deck evidence is insufficient to state a clear company proposition.';
 
-  const summary = sanitizeText(
-    `Reconstructed thesis: Causal expansion relying on ${gtmVal} acquisition, ${acvVal} monetization, and workflow retention.`
-  );
+  const reconstructedThesis = hasCoreEvidence && (gtmVal || acvVal)
+    ? sanitizeText(
+        `If the company can acquire ${icp || 'target customers'}${gtmVal ? ` via ${gtmVal}` : ''}, convert initial adoption under ${acvVal || 'its monetization model'}, and sustain customer retention, then it can scale ${arrVal ? `from ${arrVal} ` : ''}into a venture-scale business${mktVal ? ` in ${mktVal}` : ''}.`
+      )
+    : 'The deck establishes initial company descriptors, but does not provide enough evidence to reconstruct a supported acquisition → monetization → retention → expansion chain.';
+
+  const summary = hasCoreEvidence
+    ? sanitizeText(
+        `Reconstructed thesis: Initial proposition focused on ${prob || 'core problem'} for ${icp || 'target customers'}.`
+      )
+    : 'Evidence is insufficient to reconstruct a supported causal investment thesis.';
 
   return {
-    problem: sanitizeText(prob),
-    targetCustomer: sanitizeText(icp),
-    wedge: sanitizeText(sol),
-    valueCreation: sanitizeText(`Value creation through solving ${prob} for ${icp}`),
-    distribution: sanitizeText(gtmVal),
-    monetization: sanitizeText(acvVal),
-    growth: sanitizeText(arrVal),
-    marketExpansion: sanitizeText(mktVal),
-    defensibility: sanitizeText('Workflow integration and customer data accumulation'),
-    teamAdvantage: sanitizeText(teamVal),
-    capitalPath: sanitizeText(`Capital path for ${stage} funding stage`),
+    problem: sanitizeText(prob || 'Not specified in deck'),
+    targetCustomer: sanitizeText(icp || 'Not specified in deck'),
+    wedge: sanitizeText(sol || 'Not specified in deck'),
+    valueCreation: sanitizeText(sol ? `Value creation through solving ${prob || 'problem'} for ${icp || 'target buyers'}` : 'Not established'),
+    distribution: sanitizeText(gtmVal || 'Not specified in deck'),
+    monetization: sanitizeText(acvVal || 'Not specified in deck'),
+    growth: sanitizeText(arrVal || 'Not established'),
+    marketExpansion: sanitizeText(mktVal || 'Not specified in deck'),
+    defensibility: sanitizeText('Not established by current deck evidence'),
+    teamAdvantage: sanitizeText(teamVal || 'Not specified in deck'),
+    capitalPath: sanitizeText(stage ? `Capital path for ${stage} funding stage` : 'Not established by current deck evidence'),
     summary,
     statedThesis,
     reconstructedThesis,
@@ -148,9 +353,9 @@ function constructMechanisms(
   validSlides: Set<number>,
   validClaimIds: Set<string>
 ): InvestmentCaseMechanism[] {
+  if (!profile && !claimMap?.claims?.length) return [];
+
   const mechanisms: InvestmentCaseMechanism[] = [];
-  const archetype = context?.businessModel.primaryArchetype || 'B2B SaaS';
-  const techCategory = context?.businessModel.technologyCategory || 'software';
 
   const findClaims = (keyword: string): MaterialClaim[] => {
     if (!claimMap?.claims) return [];
@@ -199,7 +404,7 @@ function constructMechanisms(
     id: 'mech_customer_acquisition',
     category: 'customer_acquisition',
     statement: sanitizeText(
-      `Customer acquisition via ${profile?.goToMarket?.salesMotion?.rawValue || 'direct or outbound sales motion'}`
+      `Customer acquisition via ${profile?.goToMarket?.salesMotion?.rawValue || 'acquisition channels'}`
     ),
     importance: 'critical',
     evidenceStatus: gtmClaims.some((c) => c.supportStatus === 'supported')
@@ -226,7 +431,7 @@ function constructMechanisms(
     id: 'mech_monetization',
     category: 'monetization',
     statement: sanitizeText(
-      `Unit monetization through ${profile?.businessModel?.pricingValues?.rawValue || profile?.businessModel?.revenueModel?.rawValue || 'recurring software pricing'}`
+      `Unit monetization through ${profile?.businessModel?.pricingValues?.rawValue || profile?.businessModel?.revenueModel?.rawValue || 'pricing model'}`
     ),
     importance: 'critical',
     evidenceStatus: monClaims.some((c) => c.supportStatus === 'supported')
@@ -270,15 +475,20 @@ function constructMechanisms(
   });
 
   // 5. Defensibility Mechanism
+  const diffClaims = findClaims('moat').concat(findClaims('differentiation')).concat(findClaims('patent'));
   mechanisms.push({
     id: 'mech_defensibility',
     category: 'defensibility',
-    statement: sanitizeText('Moat creation via workflow integration, switching costs, or network effects'),
+    statement: sanitizeText(diffClaims.length > 0 ? diffClaims[0].claimText : 'Defensibility mechanism not established by current deck evidence'),
     importance: 'high',
-    evidenceStatus: techCategory === 'deeptech' || techCategory === 'hardware' ? 'partially_supported' : 'asserted_only',
-    supportingClaimIds: [],
-    supportingSlideNumbers: [],
-    supportingFacts: [],
+    evidenceStatus: diffClaims.some((c) => c.supportStatus === 'supported')
+      ? 'supported'
+      : diffClaims.length > 0
+      ? 'partially_supported'
+      : 'unsupported',
+    supportingClaimIds: diffClaims.map((c) => c.id).filter((id) => validClaimIds.has(id)),
+    supportingSlideNumbers: Array.from(new Set(diffClaims.map((c) => c.slideNumber).filter((s): s is number => typeof s === 'number' && validSlides.has(s)))),
+    supportingFacts: diffClaims.filter((c) => c.supportStatus === 'supported').map((c) => sanitizeText(c.claimText)),
     contradictingClaimIds: [],
     contradictingSlideNumbers: [],
     confidence: 'medium',
@@ -288,7 +498,7 @@ function constructMechanisms(
 }
 
 /**
- * Deterministically constructs WhatMustBeTrue items adapted to archetype, stage, and extracted profile.
+ * Deterministically constructs WhatMustBeTrue items adapted to archetype, stage, and expectation policies.
  */
 function constructWhatMustBeTrue(
   profile: StartupProfile | null,
@@ -298,81 +508,78 @@ function constructWhatMustBeTrue(
   validSlides: Set<number>,
   validClaimIds: Set<string>
 ): WhatMustBeTrue[] {
-  const items: WhatMustBeTrue[] = [];
-  const archetype = context?.businessModel.primaryArchetype || 'B2B SaaS';
-  const techCategory = context?.businessModel.technologyCategory || 'software';
-  const stage = context?.declaredStage.normalizedStage || 'seed';
-  const maturity = context?.observedMaturity.value || 'early_market_evidence';
+  if (!profile && !claimMap?.claims?.length) return [];
 
-  const custVal = profile?.traction?.customerCount?.rawValue || '';
-  const paidCustVal = profile?.traction?.paidCustomerCount?.rawValue || '';
+  const items: WhatMustBeTrue[] = [];
+
+  const stage = context?.declaredStage.normalizedStage || 'unknown';
   const gtmText = profile?.goToMarket?.salesMotion?.rawValue || '';
   const isFounderGtm = gtmText.toLowerCase().includes('founder');
 
   // Assumption 1: Problem Severity & Urgency
-  items.push({
-    id: 'wmbt_problem_urgency',
-    statement: sanitizeText('Target customers experience problem with sufficient severity to justify purchasing budget'),
-    category: 'value_creation',
-    importance: 'critical',
-    assumptionOrigin: 'implicit',
-    evidenceStatus: profile?.problemSolution?.problemStatement?.rawValue ? 'partially_supported' : 'unsupported',
-    evidenceQuality: 'customer_quoted',
-    supportingClaimIds: [],
-    supportingSlideNumbers: [],
-    supportingFacts: [],
-    contradictingClaimIds: [],
-    contradictingSlideNumbers: [],
-    isThesisBottleneck: false,
-    suggestedFounderAction: {
-      type: 'PREPARE_DILIGENCE_ANSWER',
-      scope: 'diligence_prep',
-      action: 'Document specific customer quotes and budget allocation evidence',
-    },
-    confidence: 'high',
-  });
+  if (profile?.problemSolution?.problemStatement?.rawValue) {
+    items.push({
+      id: 'wmbt_problem_urgency',
+      statement: sanitizeText('Target customers experience problem with sufficient severity to justify purchasing budget'),
+      category: 'value_creation',
+      importance: 'critical',
+      assumptionOrigin: 'implicit',
+      evidenceStatus: 'partially_supported',
+      evidenceQuality: 'customer_quoted',
+      supportingClaimIds: [],
+      supportingSlideNumbers: [],
+      supportingFacts: [],
+      contradictingClaimIds: [],
+      contradictingSlideNumbers: [],
+      isThesisBottleneck: false,
+      suggestedFounderAction: {
+        type: 'PREPARE_DILIGENCE_ANSWER',
+        scope: 'diligence_prep',
+        action: 'Document specific customer quotes and budget allocation evidence',
+      },
+      confidence: 'high',
+    });
+  }
 
   // Assumption 2: GTM Scalability Beyond Founders
-  const isGtmBottleneck = isFounderGtm || maturity === 'early_market_evidence' || stage === 'seed';
-  items.push({
-    id: 'wmbt_gtm_repeatability',
-    statement: sanitizeText('Customer acquisition can transition from founder-led sales into a repeatable channel motion'),
-    category: 'customer_acquisition',
-    importance: 'critical',
-    assumptionOrigin: isFounderGtm ? 'implicit' : 'explicit',
-    evidenceStatus: context?.functionalMaturity.distributionMaturity === 'repeatable_channels'
-      ? 'supported'
-      : context?.functionalMaturity.distributionMaturity === 'emerging_channels'
-      ? 'partially_supported'
-      : stage === 'pre_seed'
-      ? 'not_yet_testable'
-      : 'unsupported',
-    evidenceQuality: 'operational',
-    supportingClaimIds: [],
-    supportingSlideNumbers: [],
-    supportingFacts: [],
-    contradictingClaimIds: [],
-    contradictingSlideNumbers: [],
-    isThesisBottleneck: isGtmBottleneck,
-    bottleneckReason: isGtmBottleneck
-      ? 'All customer acquisition and revenue growth depend on founder-led sales without proven channel repeatability'
-      : undefined,
-    suggestedFounderAction: {
-      type: 'ADD_DECK_EVIDENCE',
-      scope: 'deck_fix',
-      action: 'Detail sales-cycle duration, channel partner leads, or sales hire productivity data',
-    },
-    confidence: 'medium',
-  });
+  if (expectations?.expectations?.['salesRepeatability']?.status !== 'NOT_APPLICABLE') {
+    items.push({
+      id: 'wmbt_gtm_repeatability',
+      statement: sanitizeText('Customer acquisition can transition from founder-led sales into a repeatable channel motion'),
+      category: 'customer_acquisition',
+      importance: 'critical',
+      assumptionOrigin: isFounderGtm ? 'implicit' : 'explicit',
+      evidenceStatus: context?.functionalMaturity.distributionMaturity === 'repeatable_channels'
+        ? 'supported'
+        : context?.functionalMaturity.distributionMaturity === 'emerging_channels'
+        ? 'partially_supported'
+        : stage === 'pre_seed'
+        ? 'not_yet_testable'
+        : 'unsupported',
+      evidenceQuality: 'operational',
+      supportingClaimIds: [],
+      supportingSlideNumbers: [],
+      supportingFacts: [],
+      contradictingClaimIds: [],
+      contradictingSlideNumbers: [],
+      isThesisBottleneck: false, // Calculated dynamically from dependency graph
+      suggestedFounderAction: {
+        type: 'ADD_DECK_EVIDENCE',
+        scope: 'deck_fix',
+        action: 'Detail sales-cycle duration, channel partner leads, or sales hire productivity data',
+      },
+      confidence: 'medium',
+    });
+  }
 
   const rawArchetype = (
-    (context?.businessModel.primaryArchetype || '') +
+    (context?.businessModel?.primaryArchetype || '') +
     ' ' +
     (profile?.businessModel?.revenueModel?.rawValue || '')
   ).toLowerCase();
 
   const rawTech = (
-    (context?.businessModel.technologyCategory || '') +
+    (context?.businessModel?.technologyCategory || '') +
     ' ' +
     (profile?.problemSolution?.productDescription?.rawValue || '') +
     ' ' +
@@ -389,8 +596,9 @@ function constructWhatMustBeTrue(
     rawTech.includes('quantum') ||
     rawTech.includes('semiconductor');
 
-  // Assumption 3: Business Model Specific Assumptions
-  if (isSaas) {
+  // Assumption 3: Business Model Specific Assumptions (governed by Expectations Policy)
+  if (isSaas && expectations?.expectations?.['retention']?.status !== 'NOT_APPLICABLE') {
+    const isNotYet = expectations?.expectations?.['retention']?.status === 'NOT_YET_EXPECTED' || stage === 'pre_seed';
     items.push({
       id: 'wmbt_saas_retention',
       statement: sanitizeText('Customer cohorts retain software subscription value over multi-year contracts'),
@@ -399,7 +607,7 @@ function constructWhatMustBeTrue(
       assumptionOrigin: 'implicit',
       evidenceStatus: context?.functionalMaturity.revenueMaturity === 'recurring_revenue'
         ? 'partially_supported'
-        : stage === 'pre_seed'
+        : isNotYet
         ? 'not_yet_testable'
         : 'unsupported',
       evidenceQuality: 'cohort',
@@ -417,22 +625,23 @@ function constructWhatMustBeTrue(
       confidence: 'high',
     });
   }
-  if (isMarketplace) {
+
+  if (isMarketplace && expectations?.expectations?.['unitEconomics']?.status !== 'NOT_APPLICABLE') {
+    const hasTraction = profile?.traction?.userCount?.rawValue || profile?.traction?.customerCount?.rawValue;
     items.push({
       id: 'wmbt_marketplace_liquidity',
       statement: sanitizeText('Supply and demand achieve localized liquidity and recurring transaction density'),
       category: 'growth',
       importance: 'critical',
       assumptionOrigin: 'implicit',
-      evidenceStatus: 'partially_supported',
+      evidenceStatus: hasTraction ? 'partially_supported' : stage === 'pre_seed' ? 'not_yet_testable' : 'unsupported',
       evidenceQuality: 'operational',
       supportingClaimIds: [],
       supportingSlideNumbers: [],
       supportingFacts: [],
       contradictingClaimIds: [],
       contradictingSlideNumbers: [],
-      isThesisBottleneck: true,
-      bottleneckReason: 'Marketplace take-rate economics fail if transaction frequency and liquidity remain low',
+      isThesisBottleneck: false, // Calculated dynamically
       suggestedFounderAction: {
         type: 'ADD_DECK_EVIDENCE',
         scope: 'deck_fix',
@@ -441,22 +650,23 @@ function constructWhatMustBeTrue(
       confidence: 'medium',
     });
   }
-  if (isConsumer) {
+
+  if (isConsumer && expectations?.expectations?.['retention']?.status !== 'NOT_APPLICABLE') {
+    const hasUsers = profile?.traction?.userCount?.rawValue;
     items.push({
       id: 'wmbt_consumer_retention',
       statement: sanitizeText('User acquisition converts into durable organic engagement and monetization density'),
       category: 'retention',
       importance: 'critical',
       assumptionOrigin: 'implicit',
-      evidenceStatus: 'unsupported',
+      evidenceStatus: hasUsers ? 'partially_supported' : stage === 'pre_seed' ? 'not_yet_testable' : 'unsupported',
       evidenceQuality: 'cohort',
       supportingClaimIds: [],
       supportingSlideNumbers: [],
       supportingFacts: [],
       contradictingClaimIds: [],
       contradictingSlideNumbers: [],
-      isThesisBottleneck: true,
-      bottleneckReason: 'High consumer top-of-funnel downloads decay without long-term cohort retention',
+      isThesisBottleneck: false, // Calculated dynamically
       suggestedFounderAction: {
         type: 'PROVIDE_EXISTING_EVIDENCE',
         scope: 'founder_input',
@@ -465,22 +675,23 @@ function constructWhatMustBeTrue(
       confidence: 'medium',
     });
   }
+
   if (isDeeptechOrHardware) {
+    const hasTechProof = profile?.technology?.coreTechnology?.rawValue || profile?.technology?.proprietaryClaims?.rawValue;
     items.push({
       id: 'wmbt_deeptech_technical_proof',
       statement: sanitizeText('Core technical breakthrough is reproducible outside controlled laboratory environments'),
       category: 'technical_execution',
       importance: 'critical',
       assumptionOrigin: 'explicit',
-      evidenceStatus: 'partially_supported',
+      evidenceStatus: hasTechProof ? 'partially_supported' : 'unsupported',
       evidenceQuality: 'technical',
       supportingClaimIds: [],
       supportingSlideNumbers: [],
       supportingFacts: [],
       contradictingClaimIds: [],
       contradictingSlideNumbers: [],
-      isThesisBottleneck: true,
-      bottleneckReason: 'Commercialization is impossible if technical proof cannot be demonstrated under field conditions',
+      isThesisBottleneck: false, // Calculated dynamically
       suggestedFounderAction: {
         type: 'PREPARE_DILIGENCE_ANSWER',
         scope: 'diligence_prep',
@@ -490,28 +701,30 @@ function constructWhatMustBeTrue(
     });
   }
 
-  // Assumption 4: Market Expansion & Defensibility
-  items.push({
-    id: 'wmbt_market_expansion',
-    statement: sanitizeText('Initial customer wedge expands logically into reachable adjacent market budget'),
-    category: 'market_expansion',
-    importance: 'medium',
-    assumptionOrigin: 'explicit',
-    evidenceStatus: profile?.market?.TAM?.rawValue ? 'partially_supported' : 'asserted_only',
-    evidenceQuality: 'market_research',
-    supportingClaimIds: [],
-    supportingSlideNumbers: [],
-    supportingFacts: [],
-    contradictingClaimIds: [],
-    contradictingSlideNumbers: [],
-    isThesisBottleneck: false,
-    suggestedFounderAction: {
-      type: 'CLARIFY_NARRATIVE',
-      scope: 'deck_fix',
-      action: 'Provide bottom-up TAM derivation showing buyer count multiplied by ACV',
-    },
-    confidence: 'medium',
-  });
+  // Assumption 4: Market Expansion
+  if (profile?.market?.TAM?.rawValue || (context?.observedMaturity?.value && context.observedMaturity.value !== 'unknown')) {
+    items.push({
+      id: 'wmbt_market_expansion',
+      statement: sanitizeText('Initial customer wedge expands logically into reachable adjacent market budget'),
+      category: 'market_expansion',
+      importance: 'medium',
+      assumptionOrigin: 'explicit',
+      evidenceStatus: 'partially_supported',
+      evidenceQuality: 'market_research',
+      supportingClaimIds: [],
+      supportingSlideNumbers: [],
+      supportingFacts: [],
+      contradictingClaimIds: [],
+      contradictingSlideNumbers: [],
+      isThesisBottleneck: false,
+      suggestedFounderAction: {
+        type: 'CLARIFY_NARRATIVE',
+        scope: 'deck_fix',
+        action: 'Provide bottom-up TAM derivation showing buyer count multiplied by ACV',
+      },
+      confidence: 'medium',
+    });
+  }
 
   return items;
 }
@@ -537,10 +750,8 @@ function constructDependencies(
     criticality: AssumptionImportance,
     explanation: string
   ) => {
-    // Prevent self-loops and missing node references
     if (sourceId === targetId) return;
     if (!nodeIds.has(sourceId) || !nodeIds.has(targetId)) return;
-    // Prevent duplicate edges
     if (deps.some((d) => d.sourceId === sourceId && d.targetId === targetId)) return;
 
     deps.push({
@@ -553,25 +764,29 @@ function constructDependencies(
     });
   };
 
-  addDep(
-    'dep_gtm_to_revenue',
-    'wmbt_gtm_repeatability',
-    'mech_monetization',
-    'enables',
-    'critical',
-    'Repeatable sales acquisition motion is required to enable predictable recurring revenue monetization'
-  );
+  if (nodeIds.has('wmbt_gtm_repeatability') && nodeIds.has('mech_monetization')) {
+    addDep(
+      'dep_gtm_to_revenue',
+      'wmbt_gtm_repeatability',
+      'mech_monetization',
+      'enables',
+      'critical',
+      'Repeatable sales acquisition motion is required to enable predictable recurring revenue monetization'
+    );
+  }
 
-  addDep(
-    'dep_problem_to_gtm',
-    'wmbt_problem_urgency',
-    'wmbt_gtm_repeatability',
-    'requires',
-    'critical',
-    'Scalable GTM acquisition depends on problem urgency driving buyer budget prioritization'
-  );
+  if (nodeIds.has('wmbt_problem_urgency') && nodeIds.has('wmbt_gtm_repeatability')) {
+    addDep(
+      'dep_problem_to_gtm',
+      'wmbt_problem_urgency',
+      'wmbt_gtm_repeatability',
+      'requires',
+      'critical',
+      'Scalable GTM acquisition depends on problem urgency driving buyer budget prioritization'
+    );
+  }
 
-  if (nodeIds.has('wmbt_saas_retention')) {
+  if (nodeIds.has('wmbt_saas_retention') && nodeIds.has('mech_retention')) {
     addDep(
       'dep_retention_to_growth',
       'wmbt_saas_retention',
@@ -582,7 +797,72 @@ function constructDependencies(
     );
   }
 
+  if (nodeIds.has('wmbt_marketplace_liquidity') && nodeIds.has('mech_monetization')) {
+    addDep(
+      'dep_liquidity_to_monetization',
+      'wmbt_marketplace_liquidity',
+      'mech_monetization',
+      'enables',
+      'critical',
+      'Marketplace transaction density is required to generate sustainable take-rate monetization'
+    );
+  }
+
   return deps;
+}
+
+/**
+ * Derives thesis bottlenecks based on dependency concentration and unproven status.
+ */
+function deriveThesisBottlenecks(
+  whatMustBeTrue: WhatMustBeTrue[],
+  dependencies: InvestmentCaseDependency[],
+  mechanisms: InvestmentCaseMechanism[],
+  context: CompanyEvaluationContext | null,
+  profile: StartupProfile | null
+): WhatMustBeTrue[] {
+  const downstreamCounts = new Map<string, number>();
+  for (const dep of dependencies) {
+    downstreamCounts.set(dep.sourceId, (downstreamCounts.get(dep.sourceId) || 0) + 1);
+  }
+
+  const gtmText = profile?.goToMarket?.salesMotion?.rawValue || '';
+  const revText = profile?.businessModel?.revenueModel?.rawValue || '';
+  const isFounderGtm = gtmText.toLowerCase().includes('founder');
+  const isMarketplace = context?.businessModel?.primaryArchetype === 'marketplace' || revText.toLowerCase().includes('marketplace');
+  const isConsumer = context?.businessModel?.primaryArchetype === 'consumer' || revText.toLowerCase().includes('consumer') || revText.toLowerCase().includes('b2c');
+
+  return whatMustBeTrue.map((w) => {
+    const isWeak = w.evidenceStatus === 'unsupported' || w.evidenceStatus === 'asserted_only' || w.evidenceStatus === 'partially_supported' || w.evidenceStatus === 'not_yet_testable';
+    const isCritical = w.importance === 'critical' || w.importance === 'high';
+    const downstream = downstreamCounts.get(w.id) || 0;
+
+    let isBottleneck = false;
+    let bottleneckReason: string | undefined = undefined;
+
+    if (isCritical && isWeak && downstream >= 1) {
+      isBottleneck = true;
+      bottleneckReason = `Multiple core downstream mechanisms depend on ${w.statement.toLowerCase()}, which currently lacks supporting evidence.`;
+    } else if (w.id === 'wmbt_gtm_repeatability' && isFounderGtm && isWeak) {
+      isBottleneck = true;
+      bottleneckReason = 'All customer acquisition and revenue growth depend on founder-led sales without proven channel repeatability.';
+    } else if (w.id === 'wmbt_marketplace_liquidity' && isMarketplace && isWeak) {
+      isBottleneck = true;
+      bottleneckReason = 'Marketplace unit economics collapse without critical buyer and seller liquidity density.';
+    } else if (w.id === 'wmbt_consumer_retention' && isConsumer && isWeak) {
+      isBottleneck = true;
+      bottleneckReason = 'High consumer acquisition cost is non-viable without strong organic or subscription retention.';
+    } else if (w.id === 'wmbt_deeptech_technical_proof' && isWeak) {
+      isBottleneck = true;
+      bottleneckReason = 'Commercialization is impossible if technical proof cannot be demonstrated under field conditions.';
+    }
+
+    return {
+      ...w,
+      isThesisBottleneck: isBottleneck,
+      bottleneckReason: isBottleneck ? bottleneckReason : undefined,
+    };
+  });
 }
 
 /**
@@ -594,40 +874,41 @@ function constructRisks(
   diagnostics: DeckDiagnostics | null,
   whatMustBeTrue: WhatMustBeTrue[]
 ): InvestmentCaseRisk[] {
+  if (!profile && !diagnostics?.contradictions?.length) return [];
+
   const risks: InvestmentCaseRisk[] = [];
 
-  const archetype = context?.businessModel.primaryArchetype || 'B2B SaaS';
-  const stage = context?.declaredStage.normalizedStage || 'seed';
+  const stage = context?.declaredStage.normalizedStage || 'unknown';
   const gtmText = (profile?.goToMarket?.salesMotion?.rawValue || '').toLowerCase();
   const acvText = (
     profile?.businessModel?.pricingValues?.rawValue ||
     profile?.businessModel?.revenueModel?.rawValue ||
     ''
   ).toLowerCase();
-  const arrVal = profile?.traction?.ARR?.rawValue || profile?.traction?.revenue?.rawValue;
 
   // Second-Order Risk 1: High ACV + Self-serve SMB mismatch
-  if (acvText.includes('100k') || acvText.includes('enterprise')) {
-    if (gtmText.includes('self-serve') || gtmText.includes('smb')) {
-      risks.push({
-        id: 'risk_commercial_model_tension',
-        category: 'economics',
-        title: sanitizeText('Commercial Model Tension: Enterprise ACV vs Self-Serve Channel'),
-        description: sanitizeText(
-          'The investment case assumes high enterprise ACVs but describes a self-serve GTM channel, creating potential friction in sales motion execution.'
-        ),
-        riskType: 'economics',
-        whyItMatters: sanitizeText(
-          'Enterprise buyers typically require dedicated security reviews, procurement cycles, and consultative sales touchpoints.'
-        ),
-        supportingEvidence: [acvText, gtmText],
-        contradictingEvidence: [],
-        relatedAssumptionIds: ['wmbt_gtm_repeatability'],
-        relatedMechanismIds: ['mech_customer_acquisition'],
-        severity: 'material',
-        confidence: 'high',
-      });
-    }
+  const isHighAcv = acvText.includes('100k') || acvText.includes('$50k') || acvText.includes('enterprise');
+  const isSelfServe = gtmText.includes('self-serve') || gtmText.includes('smb');
+
+  if (isHighAcv && isSelfServe) {
+    risks.push({
+      id: 'risk_commercial_model_tension',
+      category: 'economics',
+      title: sanitizeText('Commercial Model Tension: Enterprise ACV vs Self-Serve Channel'),
+      description: sanitizeText(
+        'The investment case assumes high enterprise ACVs but describes a self-serve GTM channel, creating potential friction in sales motion execution.'
+      ),
+      riskType: 'economics',
+      whyItMatters: sanitizeText(
+        'Enterprise buyers typically require dedicated security reviews, procurement cycles, and consultative sales touchpoints.'
+      ),
+      supportingEvidence: [acvText, gtmText].filter(Boolean),
+      contradictingEvidence: [],
+      relatedAssumptionIds: ['wmbt_gtm_repeatability'],
+      relatedMechanismIds: ['mech_customer_acquisition'],
+      severity: 'material',
+      confidence: 'high',
+    });
   }
 
   // Second-Order Risk 2: Growth without Retention Proof
@@ -645,7 +926,7 @@ function constructRisks(
       whyItMatters: sanitizeText(
         'Growth in early periods without cohort retention proof leaves revenue durability and customer lifetime value unverified.'
       ),
-      supportingEvidence: [growthVal],
+      supportingEvidence: [growthVal].filter(Boolean),
       contradictingEvidence: [],
       relatedAssumptionIds: ['wmbt_saas_retention'],
       relatedMechanismIds: ['mech_retention'],
@@ -667,7 +948,7 @@ function constructRisks(
       whyItMatters: sanitizeText(
         'Venture scalability requires transitioning customer acquisition from founder network into repeatable sales channels.'
       ),
-      supportingEvidence: [gtmText],
+      supportingEvidence: [gtmText].filter(Boolean),
       contradictingEvidence: [],
       relatedAssumptionIds: ['wmbt_gtm_repeatability'],
       relatedMechanismIds: ['mech_customer_acquisition'],
@@ -741,7 +1022,7 @@ function constructUnresolvedQuestions(
   const questions: InvestmentCaseQuestion[] = [];
 
   const unprovenAssumptions = whatMustBeTrue.filter(
-    (w) => w.evidenceStatus === 'unsupported' || w.evidenceStatus === 'asserted_only'
+    (w) => w.evidenceStatus === 'unsupported' || w.evidenceStatus === 'asserted_only' || w.evidenceStatus === 'partially_supported'
   );
 
   for (let i = 0; i < unprovenAssumptions.length; i++) {
@@ -793,23 +1074,25 @@ function constructSummary(
     mostImportantUnprovenAssumptions: unprovenAssumptions,
     thesisBottlenecks: bottlenecks,
     materialRisks: materialRisks,
-    highestLeverageFounderActions: actions,
+    highestLeverageFounderActions: actions.length > 0 ? actions : ['Provide core pitch deck evidence for investment case reconstruction'],
   };
 }
 
 /**
  * Validates and cleanses an InvestmentCase object to enforce strict graph integrity,
- * valid slide numbers, valid claim IDs, no self-loop dependencies, no duplicate edges,
- * and no prohibited scoring language.
+ * valid slide numbers, valid claim IDs, evidence grounding against canonical corpus,
+ * no self-loop dependencies, no duplicate edges, and no prohibited scoring language.
  */
 export function validateAndCleanseInvestmentCase(
   rawCase: InvestmentCase,
   profile: StartupProfile | null,
   claimMap: ClaimEvidenceMap | null,
-  diagnostics: DeckDiagnostics | null
+  diagnostics: DeckDiagnostics | null,
+  slideEvidence?: Array<{ textContent?: string; extractedText?: string; exactText?: string }> | null
 ): InvestmentCase {
-  const validSlides = getValidSlideNumbers(profile, claimMap, diagnostics);
+  const validSlides = getValidSlideNumbers(profile, claimMap, diagnostics, slideEvidence as any);
   const validClaimIds = getValidClaimIds(claimMap);
+  const corpus = buildCanonicalEvidenceCorpus(profile, claimMap, diagnostics, slideEvidence);
 
   // Cleanse WhatMustBeTrue
   const validWmbtIds = new Set<string>();
@@ -822,6 +1105,9 @@ export function validateAndCleanseInvestmentCase(
       supportingClaimIds: (w.supportingClaimIds || []).filter((id) => validClaimIds.has(id)),
       contradictingSlideNumbers: (w.contradictingSlideNumbers || []).filter((s) => validSlides.has(s)),
       contradictingClaimIds: (w.contradictingClaimIds || []).filter((id) => validClaimIds.has(id)),
+      supportingFacts: (w.supportingFacts || [])
+        .map(sanitizeText)
+        .filter((fact) => isStringSupportedByCorpus(fact, corpus)),
       bottleneckReason: w.bottleneckReason ? sanitizeText(w.bottleneckReason) : undefined,
       suggestedFounderAction: w.suggestedFounderAction
         ? {
@@ -843,7 +1129,9 @@ export function validateAndCleanseInvestmentCase(
       supportingClaimIds: (m.supportingClaimIds || []).filter((id) => validClaimIds.has(id)),
       contradictingSlideNumbers: (m.contradictingSlideNumbers || []).filter((s) => validSlides.has(s)),
       contradictingClaimIds: (m.contradictingClaimIds || []).filter((id) => validClaimIds.has(id)),
-      supportingFacts: (m.supportingFacts || []).map(sanitizeText),
+      supportingFacts: (m.supportingFacts || [])
+        .map(sanitizeText)
+        .filter((fact) => isStringSupportedByCorpus(fact, corpus)),
     };
   });
 
@@ -869,6 +1157,12 @@ export function validateAndCleanseInvestmentCase(
     title: sanitizeText(r.title),
     description: sanitizeText(r.description),
     whyItMatters: sanitizeText(r.whyItMatters),
+    supportingEvidence: (r.supportingEvidence || [])
+      .map(sanitizeText)
+      .filter((ev) => isStringSupportedByCorpus(ev, corpus)),
+    contradictingEvidence: (r.contradictingEvidence || [])
+      .map(sanitizeText)
+      .filter((ev) => isStringSupportedByCorpus(ev, corpus)),
     relatedAssumptionIds: (r.relatedAssumptionIds || []).filter((id) => validWmbtIds.has(id)),
     relatedMechanismIds: (r.relatedMechanismIds || []).filter((id) => validMechIds.has(id)),
   }));
@@ -896,6 +1190,14 @@ export function validateAndCleanseInvestmentCase(
     relatedRiskIds: (q.relatedRiskIds || []).filter((id) => cleansedRisks.some((r) => r.id === id)),
   }));
 
+  // Recompute Case Summary deterministically from cleansed objects
+  const summary = constructSummary(
+    rawCase.investmentThesis,
+    cleansedMechs,
+    cleansedWmbt,
+    cleansedRisks
+  );
+
   return {
     investmentThesis: {
       ...rawCase.investmentThesis,
@@ -920,15 +1222,7 @@ export function validateAndCleanseInvestmentCase(
     risks: cleansedRisks,
     contradictions: cleansedContras,
     unresolvedQuestions: cleansedQuestions,
-    caseSummary: {
-      ...rawCase.caseSummary,
-      thesisSummary: sanitizeText(rawCase.caseSummary.thesisSummary),
-      strongestSupportedMechanisms: (rawCase.caseSummary.strongestSupportedMechanisms || []).map(sanitizeText),
-      mostImportantUnprovenAssumptions: (rawCase.caseSummary.mostImportantUnprovenAssumptions || []).map(sanitizeText),
-      thesisBottlenecks: (rawCase.caseSummary.thesisBottlenecks || []).map(sanitizeText),
-      materialRisks: (rawCase.caseSummary.materialRisks || []).map(sanitizeText),
-      highestLeverageFounderActions: (rawCase.caseSummary.highestLeverageFounderActions || []).map(sanitizeText),
-    },
+    caseSummary: summary,
   };
 }
 
@@ -940,14 +1234,15 @@ export function reconstructInvestmentCase(
   claimMap: ClaimEvidenceMap | null,
   diagnostics: DeckDiagnostics | null,
   evaluationContext: CompanyEvaluationContext | null,
-  evaluationExpectations: EvaluationExpectations | null
+  evaluationExpectations: EvaluationExpectations | null,
+  slideEvidence?: Array<{ textContent?: string; extractedText?: string; exactText?: string }> | null
 ): InvestmentCase {
-  const validSlides = getValidSlideNumbers(profile, claimMap, diagnostics);
+  const validSlides = getValidSlideNumbers(profile, claimMap, diagnostics, slideEvidence as any);
   const validClaimIds = getValidClaimIds(claimMap);
 
   const thesis = reconstructInvestmentThesis(profile, evaluationContext);
   const mechanisms = constructMechanisms(profile, evaluationContext, claimMap, validSlides, validClaimIds);
-  const whatMustBeTrue = constructWhatMustBeTrue(
+  const rawWmbt = constructWhatMustBeTrue(
     profile,
     evaluationContext,
     evaluationExpectations,
@@ -955,7 +1250,8 @@ export function reconstructInvestmentCase(
     validSlides,
     validClaimIds
   );
-  const dependencies = constructDependencies(whatMustBeTrue, mechanisms);
+  const dependencies = constructDependencies(rawWmbt, mechanisms);
+  const whatMustBeTrue = deriveThesisBottlenecks(rawWmbt, dependencies, mechanisms, evaluationContext, profile);
   const risks = constructRisks(profile, evaluationContext, diagnostics, whatMustBeTrue);
   const contradictions = constructContradictions(diagnostics);
   const questions = constructUnresolvedQuestions(whatMustBeTrue, risks);
@@ -972,5 +1268,5 @@ export function reconstructInvestmentCase(
     caseSummary: summary,
   };
 
-  return validateAndCleanseInvestmentCase(rawCase, profile, claimMap, diagnostics);
+  return validateAndCleanseInvestmentCase(rawCase, profile, claimMap, diagnostics, slideEvidence);
 }

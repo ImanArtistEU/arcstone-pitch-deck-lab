@@ -7,12 +7,12 @@ import {
   ListChecks,
   HelpCircle,
   Building2,
-  Database,
-  ChevronRight,
+  Scale,
 } from "lucide-react";
 
 export type ReviewTab =
   | "overview"
+  | "investment_case"
   | "deck_review"
   | "action_plan"
   | "investor_prep"
@@ -43,6 +43,11 @@ export function ReviewNav({
       id: "overview",
       label: "Overview",
       icon: LayoutDashboard,
+    },
+    {
+      id: "investment_case",
+      label: "Investment Case",
+      icon: Scale,
     },
     {
       id: "deck_review",
@@ -106,10 +111,10 @@ export function ReviewNav({
 
                 {item.badge !== undefined && (
                   <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                       item.badgeType === "critical"
-                        ? "bg-rose-500/15 text-rose-300 border border-rose-500/30"
-                        : "bg-slate-800 text-slate-300 border border-slate-700/60"
+                        ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                        : "bg-blue-500/20 text-blue-400 border border-blue-500/30"
                     }`}
                   >
                     {item.badge}
@@ -119,28 +124,10 @@ export function ReviewNav({
             );
           })}
         </div>
-
-        {/* Lower-priority Secondary Section: Advanced / Evidence */}
-        <div className="pt-6 border-t border-slate-900/80">
-          <button
-            onClick={() => onTabChange("advanced_evidence")}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all group ${
-              activeTab === "advanced_evidence"
-                ? "bg-slate-800 text-slate-200 border border-slate-700"
-                : "text-slate-500 hover:text-slate-400 hover:bg-slate-900/40 border border-transparent"
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <Database className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-400" />
-              <span>Advanced Evidence</span>
-            </div>
-            <ChevronRight className="w-3 h-3 text-slate-600" />
-          </button>
-        </div>
       </nav>
 
-      {/* Mobile Top Horizontal Scrollable Bar */}
-      <div className="md:hidden w-full overflow-x-auto bg-slate-950/90 border-b border-slate-800 px-3 py-2 flex items-center gap-1.5 sticky top-[61px] z-30 no-scrollbar">
+      {/* Mobile Horizontal Navigation Header */}
+      <nav className="w-full flex md:hidden overflow-x-auto py-2 px-3 gap-2 bg-slate-950/80 border-b border-slate-800 shrink-0">
         {primaryNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -149,42 +136,18 @@ export function ReviewNav({
             <button
               key={item.id}
               onClick={() => onTabChange(item.id)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
                 isActive
                   ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
-                  : "text-slate-400 hover:text-slate-200 bg-slate-900/50 border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900 border border-transparent"
               }`}
             >
               <Icon className="w-3.5 h-3.5" />
               <span>{item.label}</span>
-              {item.badge !== undefined && (
-                <span
-                  className={`px-1 py-0.2 rounded text-[9px] font-semibold ${
-                    item.badgeType === "critical"
-                      ? "bg-rose-500/20 text-rose-300"
-                      : "bg-slate-800 text-slate-300"
-                  }`}
-                >
-                  {item.badge}
-                </span>
-              )}
             </button>
           );
         })}
-
-        <button
-          onClick={() => onTabChange("advanced_evidence")}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-            activeTab === "advanced_evidence"
-              ? "bg-slate-800 text-slate-200 border border-slate-700"
-              : "text-slate-500 hover:text-slate-400 bg-slate-900/30 border border-slate-800/60"
-          }`}
-        >
-          <Database className="w-3 h-3" />
-          <span>Advanced</span>
-        </button>
-      </div>
+      </nav>
     </>
   );
 }
-

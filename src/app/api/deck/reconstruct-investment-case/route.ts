@@ -120,18 +120,13 @@ const investmentCaseSchema: Schema = {
           evidenceQuality: {
             type: Type.STRING,
             enum: [
-              'behavioral',
-              'financial',
-              'contractual',
+              'financial_audited',
               'cohort',
               'operational',
-              'technical',
-              'regulatory',
-              'third_party',
-              'market_research',
               'customer_quoted',
-              'founder_assertion',
-              'inferred',
+              'technical',
+              'market_research',
+              'unverified',
             ],
           },
           supportingClaimIds: { type: Type.ARRAY, items: { type: Type.STRING } },
@@ -141,42 +136,9 @@ const investmentCaseSchema: Schema = {
           contradictingSlideNumbers: { type: Type.ARRAY, items: { type: Type.INTEGER } },
           isThesisBottleneck: { type: Type.BOOLEAN },
           bottleneckReason: { type: Type.STRING },
-          suggestedFounderAction: {
-            type: Type.OBJECT,
-            properties: {
-              type: {
-                type: Type.STRING,
-                enum: [
-                  'PROVIDE_EXISTING_EVIDENCE',
-                  'ADD_DECK_EVIDENCE',
-                  'CLARIFY_NARRATIVE',
-                  'VERIFY_METRIC',
-                  'RESOLVE_CONTRADICTION',
-                  'PREPARE_DILIGENCE_ANSWER',
-                  'VALIDATE_BUSINESS_ASSUMPTION',
-                  'CHANGE_FUNDRAISING_CLAIM',
-                  'NO_ACTION_YET',
-                ],
-              },
-              scope: {
-                type: Type.STRING,
-                enum: ['deck_fix', 'founder_input', 'underlying_business', 'diligence_prep'],
-              },
-              action: { type: Type.STRING },
-            },
-            required: ['type', 'scope', 'action'],
-          },
           confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
         },
-        required: [
-          'id',
-          'statement',
-          'category',
-          'importance',
-          'assumptionOrigin',
-          'evidenceStatus',
-          'isThesisBottleneck',
-        ],
+        required: ['id', 'statement', 'importance', 'evidenceStatus', 'isThesisBottleneck'],
       },
     },
     dependencies: {
@@ -189,7 +151,7 @@ const investmentCaseSchema: Schema = {
           targetId: { type: Type.STRING },
           relationship: {
             type: Type.STRING,
-            enum: ['requires', 'enables', 'constrains', 'amplifies', 'conflicts_with'],
+            enum: ['enables', 'requires', 'amplifies', 'conflicts'],
           },
           criticality: { type: Type.STRING, enum: ['critical', 'high', 'medium'] },
           explanation: { type: Type.STRING },
@@ -209,13 +171,11 @@ const investmentCaseSchema: Schema = {
           riskType: {
             type: Type.STRING,
             enum: [
+              'causal_gap',
               'evidence_gap',
-              'assumption_risk',
-              'dependency_risk',
               'contradiction',
+              'valuation',
               'concentration',
-              'timing',
-              'scalability',
               'economics',
               'execution',
             ],
@@ -225,10 +185,10 @@ const investmentCaseSchema: Schema = {
           contradictingEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
           relatedAssumptionIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           relatedMechanismIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-          severity: { type: Type.STRING, enum: ['critical', 'material', 'watch'] },
+          severity: { type: Type.STRING, enum: ['critical', 'material', 'moderate'] },
           confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
         },
-        required: ['id', 'category', 'title', 'description', 'riskType', 'whyItMatters', 'severity'],
+        required: ['id', 'title', 'description', 'whyItMatters', 'severity'],
       },
     },
     contradictions: {
@@ -310,6 +270,7 @@ export async function POST(req: NextRequest) {
       diagnostics,
       evaluationContext,
       evaluationExpectations,
+      evaluation,
       slideEvidence,
     } = requestBody;
 
@@ -321,18 +282,32 @@ export async function POST(req: NextRequest) {
         claimMap || null,
         diagnostics || null,
         evaluationContext || null,
-        evaluationExpectations || null
+        evaluationExpectations || null,
+        slideEvidence || null
       );
 
       return NextResponse.json({
         status: 'success',
         fallbackUsed: true,
+        investmentCase: fallbackCase,
         data: fallbackCase,
       });
     }
 
     const formattedContext = formatCompanyEvaluationContextForPrompt(evaluationContext);
     const formattedExpectations = formatEvaluationExpectationsForPrompt(evaluationExpectations);
+
+    const formattedEvaluation = evaluation
+      ? `Fundraising Evaluation Context:
+Overall Thesis: ${evaluation.thesisEvaluation?.verdictSummary || 'N/A'}
+Key Strengths: ${(evaluation.strongElements || []).map((e: any) => e.title).join('; ')}
+Objections: ${(evaluation.investorObjections || []).map((o: any) => o.objection).join('; ')}
+Narrative Gaps: ${(evaluation.narrativeGaps || []).map((g: any) => g.description).join('; ')}`
+      : 'No prior fundraising evaluation available.';
+
+    const formattedSlideEvidence = Array.isArray(slideEvidence) && slideEvidence.length > 0
+      ? `Text-Only Slide Evidence:\n${slideEvidence.map((s: any) => `Slide ${s.slideNumber}: ${s.textContent}`).join('\n')}`
+      : 'No raw slide text provided.';
 
     const systemPrompt = `You are an institutional venture capital partner executing an INVESTMENT CASE RECONSTRUCTION & WHAT-MUST-BE-TRUE UNDERWRITING AUDIT.
 
@@ -356,6 +331,8 @@ ${formattedContext}
 Evaluation Expectations:
 ${formattedExpectations}
 
+${formattedEvaluation}
+
 Profile Summary:
 ${JSON.stringify(profile || {}, null, 2)}
 
@@ -364,6 +341,8 @@ ${JSON.stringify(claimMap?.claims || [], null, 2)}
 
 Diagnostics:
 ${JSON.stringify(diagnostics || {}, null, 2)}
+
+${formattedSlideEvidence}
 
 Reconstruct the Causal Investment Case according to the JSON schema.`;
 
@@ -394,12 +373,14 @@ Reconstruct the Causal Investment Case according to the JSON schema.`;
       rawCase,
       profile || null,
       claimMap || null,
-      diagnostics || null
+      diagnostics || null,
+      slideEvidence || null
     );
 
     return NextResponse.json({
       status: 'success',
       fallbackUsed: false,
+      investmentCase: cleansedCase,
       data: cleansedCase,
     });
   } catch (err: unknown) {
@@ -409,13 +390,15 @@ Reconstruct the Causal Investment Case according to the JSON schema.`;
       requestBody?.claimMap || null,
       requestBody?.diagnostics || null,
       requestBody?.evaluationContext || null,
-      requestBody?.evaluationExpectations || null
+      requestBody?.evaluationExpectations || null,
+      requestBody?.slideEvidence || null
     );
 
     return NextResponse.json({
       status: 'success',
       fallbackUsed: true,
       error: err instanceof Error ? err.message : String(err),
+      investmentCase: fallbackCase,
       data: fallbackCase,
     });
   }

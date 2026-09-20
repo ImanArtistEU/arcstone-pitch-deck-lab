@@ -4,6 +4,7 @@ import { DeckDiagnostics } from '../../types/diagnostics';
 import { FundraisingEvaluation } from '../../types/evaluation';
 import { InvestorSimulatorResult } from '../../types/simulator';
 import { HybridDeckResult } from '../../types/deck';
+import { InvestmentCase } from '../../types/investment-case';
 import {
   FounderRecommendation,
   ActionPlanResult,
@@ -566,7 +567,8 @@ export async function executeRecommendationGeneration(
   claimMap: ClaimEvidenceMap | null,
   diagnostics: DeckDiagnostics | null,
   evaluation: FundraisingEvaluation | null,
-  simulatorResult: InvestorSimulatorResult | null
+  simulatorResult: InvestorSimulatorResult | null,
+  investmentCase?: InvestmentCase | null
 ): Promise<RecommendationsRunResult> {
   const totalPages = hybridResult.summary.totalPages;
   const validClaimIds = new Set<string>((claimMap?.claims || []).map((c) => c.id));
@@ -606,6 +608,7 @@ export async function executeRecommendationGeneration(
         totalPages,
         evaluationContext,
         evaluationExpectations,
+        investmentCase: investmentCase || null,
       }),
     });
 
