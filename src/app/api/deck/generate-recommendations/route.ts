@@ -30,9 +30,27 @@ const recommendationsSchema: Schema = {
             type: Type.STRING,
             description: 'What is currently weak, missing, contradictory, or poorly structured.',
           },
+          problemClass: {
+            type: Type.STRING,
+            enum: ['FACTUAL_GAP', 'EVIDENCE_GAP', 'COMMUNICATION_GAP', 'LOGIC_GAP', 'INVESTMENT_CASE_RISK'],
+            description: 'Underwriting gap classification.',
+          },
           whyItMatters: {
             type: Type.STRING,
             description: 'Why an investor cares and how it impacts understanding or credibility.',
+          },
+          investorInterpretation: {
+            type: Type.STRING,
+            description: 'Uncertainty-safe framing of how an investor may interpret this gap (e.g. "Without cohort data, an investor may be unable to determine whether growth is durable.").',
+          },
+          whyNow: {
+            type: Type.STRING,
+            description: 'Why resolving this issue matters at the current operating stage.',
+          },
+          resolutionCriteria: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: 'Bullet points detailing what "done" looks like for this fix.',
           },
           actionType: {
             type: Type.STRING,

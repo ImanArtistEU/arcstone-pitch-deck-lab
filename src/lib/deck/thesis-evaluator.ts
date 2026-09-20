@@ -396,10 +396,10 @@ export function generateDeterministicEvaluation(
     {
       id: 'dim-10',
       dimensionName: 'Defensibility',
-      status: 'ADEQUATE',
-      finding: 'Defensibility mechanisms depend on technological execution.',
+      status: profile?.competition?.differentiationClaims?.rawValue ? 'ADEQUATE' : 'UNDERDEVELOPED',
+      finding: profile?.competition?.differentiationClaims?.rawValue || 'Defensibility or moat mechanisms not explicitly detailed in deck.',
       rationale: 'Evaluated from stated proprietary attributes.',
-      slideReferences: [],
+      slideReferences: getFieldSlides(profile?.competition?.differentiationClaims),
     },
     {
       id: 'dim-11',

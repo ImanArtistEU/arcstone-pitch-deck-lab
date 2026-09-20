@@ -158,12 +158,17 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { profile, claims, diagnosticsSummary, slideEvidence } = body;
+    const { profile, claims, diagnosticsSummary, slideEvidence, evaluationContext, evaluationExpectations } = body;
 
-    const stage = profile?.fundraising?.currentStage?.rawValue || 'Unknown';
+    const declaredStage = evaluationContext?.declaredStage?.normalizedStage || profile?.fundraising?.currentStage?.rawValue || 'unknown';
+    const observedMaturity = evaluationContext?.observedMaturity?.value || 'unknown';
+    const archetype = evaluationContext?.businessModel?.primaryArchetype || 'unknown';
+
     const profileContext = profile
       ? `Startup Identity: ${profile.identity?.companyName?.rawValue || 'Unknown'}
-Stage: ${stage}
+Declared Stage: ${declaredStage} (raw: ${profile.fundraising?.currentStage?.rawValue || 'Not stated'})
+Observed Operating Maturity: ${observedMaturity}
+Business Model Archetype: ${archetype}
 Target Raise: ${profile.fundraising?.amountBeingRaised?.rawValue || 'Not stated'}
 Use of Funds: ${profile.fundraising?.useOfFunds?.rawValue || 'Not stated'}
 ARR/Revenue: ${profile.traction?.ARR?.rawValue || profile.traction?.MRR?.rawValue || 'Not stated'}
@@ -171,10 +176,10 @@ Customers: ${profile.traction?.customerCount?.rawValue || 'Not stated'}
 Customer ICP: ${profile.customerICP?.customerType?.rawValue || 'Not stated'}
 Business Model: ${profile.businessModel?.revenueModel?.rawValue || 'Not stated'}
 Pricing: ${profile.businessModel?.pricingValues?.rawValue || 'Not stated'}
-GTM Motion: ${profile.gtm?.salesMotion?.rawValue || 'Not stated'}
+GTM Motion: ${profile.goToMarket?.salesMotion?.rawValue || 'Not stated'}
 TAM: ${profile.market?.TAM?.rawValue || 'Not stated'}
 Competitors: ${profile.competition?.namedCompetitors?.rawValue || 'Not stated'}
-Missing Profile Fields: ${(profile.missingFields || []).join(', ') || 'None'}`
+Context Warnings: ${Array.isArray(evaluationContext?.contextWarnings) ? evaluationContext.contextWarnings.map((w: { message: string }) => w.message).join('; ') : 'None'}`
       : 'No profile available.';
 
     const claimsContext = Array.isArray(claims)
@@ -194,6 +199,12 @@ Missing Profile Fields: ${(profile.missingFields || []).join(', ') || 'None'}`
       ? slideEvidence.map((s: { pageNumber: number; text: string }) => `Slide ${s.pageNumber}: ${s.text}`).join('\n\n')
       : 'No slide evidence available.';
 
+    const expectationsContext = evaluationExpectations?.expectations
+      ? Object.entries(evaluationExpectations.expectations as Record<string, { dimension: string; status: string; rationale: string }>)
+          .map(([_, v]) => `- ${v.dimension}: ${v.status} (${v.rationale})`)
+          .join('\n')
+      : 'No expectation policy provided.';
+
     const ai = new GoogleGenAI({ apiKey });
 
     const systemPrompt = `You are a rigorous, institutional Venture Capital partner assessing the FUNDRAISING CASE presented by a startup's pitch deck.
@@ -206,7 +217,11 @@ STRICT INSTRUCTIONS:
 1. DO NOT assign numerical scores (no 8/10, no 85/100, no letter grades).
 2. DO NOT predict whether an investor will or will not invest.
 3. DO NOT give founder advice or rewrite slides.
-4. STAGE ADAPTATION: Adapt expectations to the startup stage (${stage}). Pre-seed companies are not expected to have mature Series A ARR metrics; seed/Series A companies making heavy traction claims require stronger substantiation.
+4. CONTEXT & EXPECTATION ADAPTATION:
+   - Declared Stage: ${declaredStage}
+   - Observed Operating Maturity: ${observedMaturity}
+   - Business Model Archetype: ${archetype}
+   - Respect the provided Expectation Policy. Do NOT demand retention cohorts (NRR) or mature scaling metrics for pre-product or early-concept startups. Conversely, expect retention and sales repeatability for scaling/repeatable-growth companies.
 5. EVALUATE THE 14 DIMENSIONS:
    - Problem Clarity
    - Solution Clarity
@@ -224,10 +239,12 @@ STRICT INSTRUCTIONS:
    - Narrative Coherence
 6. STATUS CODES: 'STRONG' | 'ADEQUATE' | 'UNDERDEVELOPED' | 'MISSING' | 'CONTRADICTORY'.
 7. WEAKNESS TAXONOMY:
-   - 'COMMUNICATION_GAP': Information might exist in reality but is not communicated in the deck.
-   - 'EVIDENCE_GAP': The deck makes a claim but fails to substantiate it.
-   - 'LOGIC_GAP': Facts exist, but the relationship between them is inconsistent or mismatched (e.g. SMB ICP vs €100k ACV self-serve).
-8. IDENTIFY INVESTOR OBJECTIONS: Surface only doubts triggered by actual gaps or inconsistencies in this deck.
+   - 'FACTUAL_GAP': Information needed to evaluate the claim is absent.
+   - 'EVIDENCE_GAP': Claim exists but support is insufficient.
+   - 'COMMUNICATION_GAP': Relevant facts appear to exist but are poorly communicated.
+   - 'LOGIC_GAP': Stated facts do not form a coherent strategic/economic story.
+   - 'INVESTMENT_CASE_RISK': Deck communicates situation clearly, but investor would reasonably see unresolved underlying risk.
+8. IDENTIFY INVESTOR OBJECTIONS: Surface only doubts triggered by actual gaps or inconsistencies in this deck. Frame objections as "The deck leaves unresolved whether..." or "Based on the deck...".
 9. IDENTIFY STRONG ELEMENTS: Cite specific deck evidence for well-substantiated areas.
 10. OVERALL SYNTHESIS: Write a concise, objective summary of the fundraising case.`;
 

@@ -174,7 +174,11 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { profile, claims, diagnostics, evaluation, selectedTriggers, stage } = body;
+    const { profile, claims, diagnostics, evaluation, selectedTriggers, stage, evaluationContext } = body;
+
+    const declaredStage = evaluationContext?.declaredStage?.normalizedStage || stage || profile?.fundraising?.currentStage?.rawValue || 'unknown';
+    const observedMaturity = evaluationContext?.observedMaturity?.value || 'unknown';
+    const archetype = evaluationContext?.businessModel?.primaryArchetype || 'unknown';
 
     if (!profile && (!claims || claims.length === 0)) {
       return NextResponse.json(
@@ -188,35 +192,35 @@ export async function POST(req: NextRequest) {
 
     const ai = new GoogleGenAI({ apiKey });
 
-    const systemPrompt = `You are a seasoned, highly rigorous early-stage venture capital partner conducting deep-dive due diligence on a startup pitch deck before a partner meeting.
+    const systemPrompt = `You are a Partner at a tier-1 Venture Capital fund preparing for an upcoming partner meeting or due diligence call with a founder.
 
-YOUR OBJECTIVE:
-Simulate the 10 to 15 most important, sharpest questions a sophisticated investor will ask about THIS SPECIFIC pitch deck.
-Explain why each question arises, show what evidence the founder already has in the deck, identify what is missing, and provide preparation guidance.
+CORE ROLE:
+Generate specific, penetrating due diligence questions tailored directly to this startup's pitch deck context.
 
-CRITICAL RULES:
-1. NEVER ASK GENERIC VC QUESTIONS. Every question MUST have a concrete trigger from the provided deck analysis (e.g. an unsupported claim, a contradiction, a missing monetization model, an underdeveloped GTM motion, or a strong metric that demands explanation of repeatability).
-   - BAD: "What is your competitive advantage?"
-   - GOOD: "You position Arcstone as AI-native dispatch, but the deck does not establish why existing TMS incumbents or general LLMs cannot replicate the routing model. What is structurally difficult for them to copy?"
+STRICT INSTRUCTIONS:
+1. GROUNDED SPECIFICITY:
+   - Ask questions that reference the exact numbers, claims, and product mechanics from this specific deck.
 2. GROUNDED EVIDENCE ONLY:
    - For 'availableEvidence', cite ONLY statements and slide numbers that exist in the provided profile/claims.
    - For 'groundedAnswer', construct a response using ONLY verified deck evidence.
-   - If evidence is insufficient, you MUST set groundedAnswer to: "Current deck evidence is insufficient to construct a reliable answer." DO NOT invent company metrics, revenue, customers, or technology.
+   - If evidence is insufficient, set groundedAnswer to: "Current deck evidence is insufficient to construct a reliable answer." DO NOT invent company metrics, revenue, customers, or technology.
 3. CURRENT ANSWERABILITY:
    - WELL_SUPPORTED: Deck contains a clear, backed answer.
    - PARTIALLY_SUPPORTED: Partial evidence exists, but crucial details are omitted.
    - WEAKLY_SUPPORTED: Only ungrounded assertions exist.
    - UNANSWERED: The necessary information is completely missing from the deck.
    - CONTRADICTORY: Conflicting statements exist across slides.
-4. DILIGENCE ON STRONG ELEMENTS TOO:
-   - Do not only attack weaknesses. If the deck presents exceptional traction (e.g., €1.2M ARR, 18% MoM), ask what drove that acceleration, cohort retention, and whether it is repeatable.
-5. STAGE ADAPTATION:
-   - Startup Stage: "${stage || profile?.fundraising?.currentStage?.rawValue || 'Seed'}".
-   - If Pre-seed: Focus on customer pain severity, early pilot proof, founder wedge, and customer validation. Do NOT penalize for lacking Series A metrics.
-   - If Seed/Series A: Scrutinize unit economics, sales repeatability, retention cohorts, and scalability.
-6. FOLLOW-UP QUESTIONS:
+4. CONTEXT & MATURITY ADAPTATION:
+   - Declared Stage: "${declaredStage}"
+   - Observed Operating Maturity: "${observedMaturity}"
+   - Business Model Archetype: "${archetype}"
+   - Pre-product / concept validation: Focus on customer pain severity, early pilot proof, founder wedge, and customer validation. Do NOT demand NRR or Series A metrics.
+   - Emerging repeatability / scaling: Scrutinize unit economics, sales repeatability, retention cohorts, pipeline conversion, and scalability.
+   - Marketplace archetype: Focus on supply/demand liquidity, take rate, and repeat transactions.
+   - Developer tools archetype: Focus on developer adoption, API call volume, and SDK conversion.
+5. FOLLOW-UP QUESTIONS:
    - Include at most 2 logical, high-impact follow-ups per primary question.
-7. QUANTITY:
+6. QUANTITY:
    - Produce between 10 and 15 prioritized questions (CRITICAL, HIGH, MEDIUM). Do not output low-priority filler questions.`;
 
     const userPrompt = `Here is the comprehensive analytical stack for the startup deck:

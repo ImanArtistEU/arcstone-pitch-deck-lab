@@ -51,6 +51,16 @@ export interface RecommendationEvidenceItem {
 }
 
 /**
+ * Problem taxonomy V2 for investor underwriting gaps
+ */
+export type ProblemClass =
+  | 'FACTUAL_GAP'
+  | 'EVIDENCE_GAP'
+  | 'COMMUNICATION_GAP'
+  | 'LOGIC_GAP'
+  | 'INVESTMENT_CASE_RISK';
+
+/**
  * Canonical Founder Recommendation Model
  */
 export interface FounderRecommendation {
@@ -59,7 +69,11 @@ export interface FounderRecommendation {
   category: string; // e.g. 'traction', 'business_model', 'market', 'gtm', 'competition', 'narrative', 'ask'
   title: string;
   problem: string;
+  problemClass?: ProblemClass;
   whyItMatters: string;
+  investorInterpretation?: string;
+  whyNow?: string;
+  resolutionCriteria?: string[];
   actionType: RecommendationActionType;
   targetSlides: number[];
   isNewSlideOrSection?: boolean;
