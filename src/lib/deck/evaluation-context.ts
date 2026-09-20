@@ -108,7 +108,7 @@ function evaluateObservedMaturity(
   const userVal = profile?.traction?.userCount?.rawValue;
   const pipelineVal = profile?.traction?.pipeline?.rawValue;
   const growthVal = profile?.traction?.growthRates?.rawValue;
-  const retVal = profile?.traction?.retentionMetrics?.rawValue || profile?.traction?.churn?.rawValue || profile?.traction?.growthRates?.rawValue;
+  const retVal = profile?.traction?.retentionMetrics?.rawValue || profile?.traction?.churn?.rawValue;
   const prodDesc = profile?.problemSolution?.productDescription?.rawValue;
 
   const parsedARR = parseMonetaryAmount(arrVal || revVal || mrrVal);
@@ -130,16 +130,18 @@ function evaluateObservedMaturity(
     rawCustStr.includes('free user') ||
     rawCustStr.includes('trial') ||
     rawCustStr.includes('signup') ||
+    rawCustStr.includes('user') ||
     rawPaidCustStr.includes('pilot') ||
-    Boolean(pipelineVal && pipelineVal !== 'not_found');
+    rawPaidCustStr.includes('trial') ||
+    rawPaidCustStr.includes('loi');
 
   const hasRevenue = parsedARR.annualAmount !== null && parsedARR.annualAmount > 0;
 
-  // Distinguish verified paid customers from pilots, LOIs, or free users
+  // Distinguish verified paid customers from pilots, LOIs, trials, or free users.
+  // Revenue existing elsewhere does NOT transform pilot count semantics into paid customers.
   const hasPaidCustomers =
-    (parsedPaidCustCount !== null && parsedPaidCustCount > 0) ||
-    (parsedCustCount !== null && parsedCustCount > 0 && !isPilotOrLoi) ||
-    (hasRevenue && parsedCustCount !== null && parsedCustCount > 0);
+    (parsedPaidCustCount !== null && parsedPaidCustCount > 0 && !rawPaidCustStr.includes('pilot') && !rawPaidCustStr.includes('trial')) ||
+    (parsedCustCount !== null && parsedCustCount > 0 && !isPilotOrLoi);
 
   const hasPilotsOrUsers =
     isPilotOrLoi ||
@@ -150,6 +152,7 @@ function evaluateObservedMaturity(
   );
 
   // Durability / Retention / Repeatability signal check
+  // NOTE: Generic growth rates (MoM, YoY) do NOT count as durability or retention.
   const hasDurabilitySignal = Boolean(
     retVal &&
       retVal !== 'not_found' &&
@@ -159,6 +162,9 @@ function evaluateObservedMaturity(
         retVal.toLowerCase().includes('ndr') ||
         retVal.toLowerCase().includes('retention') ||
         retVal.toLowerCase().includes('repeat') ||
+        retVal.toLowerCase().includes('renewal') ||
+        retVal.toLowerCase().includes('cohort') ||
+        retVal.toLowerCase().includes('expansion') ||
         retVal.toLowerCase().includes('churn'))
   );
 
@@ -182,6 +188,7 @@ function evaluateObservedMaturity(
   );
 
   // Tier 1: Scaling
+  // REQUIRES scaled revenue (>=€10M ARR) + paid customers + real durability + repeatable acquisition channels + supported claims
   if (
     parsedARR.annualAmount !== null &&
     parsedARR.annualAmount >= 10_000_000 &&
@@ -200,12 +207,13 @@ function evaluateObservedMaturity(
   }
 
   // Tier 2: Repeatable Growth
-  // REQUIRES revenue + paid customers + durability/retention or growth signal + repeatable acquisition signal
+  // REQUIRES recurring revenue (>=€1M ARR) + paid customers + real durability + repeatable acquisition channel.
+  // Generic growth alone CANNOT substitute for durability.
   if (
     parsedARR.annualAmount !== null &&
     parsedARR.annualAmount >= 1_000_000 &&
     hasPaidCustomers &&
-    (hasDurabilitySignal || hasGrowth) &&
+    hasDurabilitySignal &&
     hasRepeatableAcquisitionSignal
   ) {
     basis.push(
@@ -538,16 +546,27 @@ function evaluateFunctionalMaturity(
 
   let tractionMaturity: FunctionalMaturity['tractionMaturity'] = 'unknown';
   const rawCustStr = (custVal || '').toLowerCase();
-  const isPilotOrLoi = rawCustStr.includes('pilot') || rawCustStr.includes('loi') || rawCustStr.includes('waitlist');
+  const isPilotOrLoiText = rawCustStr.includes('pilot') || rawCustStr.includes('loi') || rawCustStr.includes('waitlist') || rawCustStr.includes('trial');
+
+  const isValidPaidVal = (val?: string) => {
+    if (!val) return false;
+    const s = val.trim().toLowerCase();
+    if (s === '' || s === '0' || s === '0 customers' || s === '0 paid' || s === 'not_found' || s === 'none' || s === 'no customers') return false;
+    if (s.includes('pilot') || s.includes('loi') || s.includes('waitlist') || s.includes('trial') || s.includes('signup')) return false;
+    const match = s.match(/(\d+)/);
+    return match ? parseInt(match[1], 10) > 0 : true;
+  };
+
+  const hasValidPaidCustomers = isValidPaidVal(paidCustVal) || (isValidPaidVal(custVal) && !isPilotOrLoiText);
 
   if (observedMaturity === 'scaling') {
     tractionMaturity = 'scale';
   } else if (observedMaturity === 'repeatable_growth') {
     tractionMaturity = 'growing_customer_base';
-  } else if (observedMaturity === 'emerging_repeatability' || paidCustVal) {
+  } else if (observedMaturity === 'emerging_repeatability' || hasValidPaidCustomers) {
     tractionMaturity = 'early_customers';
-  } else if (isPilotOrLoi || (custVal && !isPilotOrLoi && observedMaturity === 'early_market_evidence')) {
-    tractionMaturity = isPilotOrLoi ? 'pilots_or_loi' : 'early_customers';
+  } else if (isPilotOrLoiText) {
+    tractionMaturity = 'pilots_or_loi';
   } else if (observedMaturity === 'concept_validation') {
     tractionMaturity = 'concept';
   }
@@ -565,14 +584,17 @@ function evaluateFunctionalMaturity(
 
   let productMaturity: FunctionalMaturity['productMaturity'] = 'unknown';
   if (prodText && prodText !== 'not_found' && prodText.trim() !== '') {
-    if (prodText.toLowerCase().includes('platform') || prodText.toLowerCase().includes('v2') || prodText.toLowerCase().includes('enterprise-grade')) {
+    const pLower = prodText.toLowerCase();
+    if (pLower.includes('multi-tenant') && pLower.includes('deployed at scale') && pLower.includes('sla')) {
       productMaturity = 'mature_platform';
-    } else if (prodText.toLowerCase().includes('live') || prodText.toLowerCase().includes('production') || prodText.toLowerCase().includes('available')) {
+    } else if (pLower.includes('live') || pLower.includes('production') || pLower.includes('deployed') || pLower.includes('available')) {
       productMaturity = 'in_production';
-    } else if (prodText.toLowerCase().includes('mvp') || prodText.toLowerCase().includes('beta') || prodText.toLowerCase().includes('prototype')) {
+    } else if (pLower.includes('mvp') || pLower.includes('beta') || pLower.includes('prototype')) {
       productMaturity = 'prototype_mvp';
-    } else if (prodText.toLowerCase().includes('concept') || prodText.toLowerCase().includes('design')) {
+    } else if (pLower.includes('concept') || pLower.includes('design')) {
       productMaturity = 'concept_or_design';
+    } else {
+      productMaturity = 'in_production';
     }
   }
 
@@ -701,7 +723,7 @@ export function buildCompanyEvaluationContext(
   const functionalMaturity = evaluateFunctionalMaturity(profile, observedMaturity.value);
   const evidenceReferences = compileEvidenceReferences(profile);
 
-  const companyCategory = profile?.problemSolution?.valueProposition?.rawValue || 'Software / Technology';
+  const companyCategory = profile?.problemSolution?.valueProposition?.rawValue || 'unknown';
 
   const contextWarnings = generateContextWarnings(
     declaredStage,

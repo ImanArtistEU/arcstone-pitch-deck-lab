@@ -118,7 +118,7 @@ describe('Batch 5A.1 - Evaluation Context & Expectation Policy Integration Suite
       traction: {
         ARR: pf('€1.2M ARR', 5),
         customerCount: pf('50 enterprise clients across 3 distribution channels', 5),
-        growthRates: pf('15% MoM retention', 5),
+        retentionMetrics: pf('115% Net Revenue Retention (NRR across cohorts)', 5),
       },
     } as unknown as StartupProfile;
     const context = buildCompanyEvaluationContext(profile, null, null);
@@ -601,5 +601,155 @@ describe('Batch 5A.1 - Evaluation Context & Expectation Policy Integration Suite
 
     const context = buildCompanyEvaluationContext(profile, null, null);
     expect(context.capitalRegulatory.regulatoryIntensity).toBe('unknown');
+  });
+
+  // 65-77. Batch 5A.3 Discrete Regression Tests
+  it('65. 20% MoM growth does NOT count as durability', () => {
+    const profile = {
+      traction: { growthRates: pf('20% MoM growth') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).not.toBe('repeatable_growth');
+    expect(context.observedMaturity.value).not.toBe('scaling');
+  });
+
+  it('66. 100% YoY growth does NOT count as retention', () => {
+    const profile = {
+      traction: { growthRates: pf('100% YoY growth') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).not.toBe('repeatable_growth');
+  });
+
+  it('67. €2M ARR + growth + customers + channel BUT no durability does NOT become repeatable_growth', () => {
+    const profile = {
+      traction: {
+        ARR: pf('€2M ARR'),
+        customerCount: pf('20 enterprise clients'),
+        growthRates: pf('30% MoM growth'),
+      },
+      goToMarket: { salesMotion: pf('Partner channel sales') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).toBe('emerging_repeatability');
+    expect(context.observedMaturity.value).not.toBe('repeatable_growth');
+  });
+
+  it('68. €2M ARR + paid customers + retention + repeatable acquisition supports repeatable_growth', () => {
+    const profile = {
+      traction: {
+        ARR: pf('€2M ARR'),
+        customerCount: pf('20 enterprise clients'),
+        retentionMetrics: pf('120% Net Revenue Retention (NRR) cohort retention'),
+      },
+      goToMarket: { salesMotion: pf('Partner channel sales team') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).toBe('repeatable_growth');
+  });
+
+  it('69. €10M ARR without durability does NOT become scaling', () => {
+    const profile = {
+      traction: {
+        ARR: pf('€10M ARR'),
+        customerCount: pf('100 enterprise clients'),
+        growthRates: pf('200% YoY growth'),
+      },
+      goToMarket: { salesMotion: pf('Direct enterprise sales team') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).not.toBe('scaling');
+  });
+
+  it('70. revenue + "10 pilots" does NOT create paid customers', () => {
+    const profile = {
+      traction: {
+        ARR: pf('€500k ARR'),
+        customerCount: pf('10 pilots'),
+      },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.observedMaturity.value).toBe('early_market_evidence');
+    expect(context.functionalMaturity.tractionMaturity).toBe('pilots_or_loi');
+    expect(context.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+  });
+
+  it('71. paying customers + separate pipeline remains paying-customer evidence', () => {
+    const profile = {
+      traction: {
+        customerCount: pf('20 paying enterprise customers'),
+        pipeline: pf('€2M sales pipeline'),
+      },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.tractionMaturity).toBe('early_customers');
+    expect(context.functionalMaturity.tractionMaturity).not.toBe('pilots_or_loi');
+  });
+
+  it('72. "0 paid customers" does NOT become early_customers', () => {
+    const profile = {
+      traction: {
+        paidCustomerCount: pf('0 paid customers'),
+      },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+  });
+
+  it('73. "not_found" paidCustomerCount does NOT become early_customers', () => {
+    const profile = {
+      traction: {
+        paidCustomerCount: pf('not_found'),
+        customerCount: pf('not_found'),
+      },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+  });
+
+  it('74. "AI platform" does NOT imply mature_platform', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('An AI platform for automated marketing') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.productMaturity).not.toBe('mature_platform');
+  });
+
+  it('75. "enterprise-grade platform" does NOT imply mature_platform', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('An enterprise-grade platform for compliance workflow') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.productMaturity).not.toBe('mature_platform');
+  });
+
+  it('76. explicit production deployment supports in_production', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('Commercially available in production for 12 months') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.productMaturity).toBe('in_production');
+  });
+
+  it('77. missing category returns unknown, not "Software / Technology"', () => {
+    const profile = {
+      problemSolution: { valueProposition: pf('') },
+    } as unknown as StartupProfile;
+
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.companyCategory).toBe('unknown');
+    expect(context.companyCategory).not.toBe('Software / Technology');
   });
 });
