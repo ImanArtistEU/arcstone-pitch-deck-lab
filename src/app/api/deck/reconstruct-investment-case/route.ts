@@ -4,8 +4,21 @@ import { GoogleGenAI, Type, Schema } from '@google/genai';
 import {
   reconstructInvestmentCase,
   validateAndCleanseInvestmentCase,
+  buildCanonicalEvidenceCorpusReferences,
 } from '@/lib/deck/investment-case-engine';
-import { InvestmentCase } from '@/types/investment-case';
+import {
+  InvestmentCase,
+  MECHANISM_CATEGORIES,
+  ASSUMPTION_IMPORTANCES,
+  ASSUMPTION_ORIGINS,
+  EVIDENCE_STATUSES,
+  EVIDENCE_QUALITY_CLASSES,
+  DEPENDENCY_RELATIONSHIPS,
+  RISK_CATEGORIES,
+  RISK_TYPES,
+  RISK_SEVERITIES,
+  QUESTION_ANSWERABILITIES,
+} from '@/types/investment-case';
 
 /**
  * Strict JSON schema for Investment Case Reconstruction & What-Must-Be-True Engine.
@@ -30,6 +43,9 @@ const investmentCaseSchema: Schema = {
         summary: { type: Type.STRING },
         statedThesis: { type: Type.STRING },
         reconstructedThesis: { type: Type.STRING },
+        sourceEvidenceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
+        inferredComponents: { type: Type.ARRAY, items: { type: Type.STRING } },
+        unresolvedComponents: { type: Type.ARRAY, items: { type: Type.STRING } },
       },
       required: [
         'problem',
@@ -56,40 +72,21 @@ const investmentCaseSchema: Schema = {
           id: { type: Type.STRING },
           category: {
             type: Type.STRING,
-            enum: [
-              'value_creation',
-              'customer_acquisition',
-              'distribution',
-              'monetization',
-              'retention',
-              'growth',
-              'market_expansion',
-              'defensibility',
-              'capital_efficiency',
-              'technical_execution',
-              'regulatory',
-              'team_execution',
-            ],
+            enum: [...MECHANISM_CATEGORIES],
           },
           statement: { type: Type.STRING },
-          importance: { type: Type.STRING, enum: ['critical', 'high', 'medium'] },
+          importance: { type: Type.STRING, enum: [...ASSUMPTION_IMPORTANCES] },
           evidenceStatus: {
             type: Type.STRING,
-            enum: [
-              'supported',
-              'partially_supported',
-              'asserted_only',
-              'unsupported',
-              'contradictory',
-              'not_yet_testable',
-              'not_applicable',
-            ],
+            enum: [...EVIDENCE_STATUSES],
           },
           supportingClaimIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           supportingSlideNumbers: { type: Type.ARRAY, items: { type: Type.INTEGER } },
           supportingFacts: { type: Type.ARRAY, items: { type: Type.STRING } },
+          supportingEvidenceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           contradictingClaimIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           contradictingSlideNumbers: { type: Type.ARRAY, items: { type: Type.INTEGER } },
+          contradictingEvidenceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
         },
         required: ['id', 'category', 'statement', 'importance', 'evidenceStatus'],
@@ -103,37 +100,23 @@ const investmentCaseSchema: Schema = {
           id: { type: Type.STRING },
           statement: { type: Type.STRING },
           category: { type: Type.STRING },
-          importance: { type: Type.STRING, enum: ['critical', 'high', 'medium'] },
-          assumptionOrigin: { type: Type.STRING, enum: ['explicit', 'implicit'] },
+          importance: { type: Type.STRING, enum: [...ASSUMPTION_IMPORTANCES] },
+          assumptionOrigin: { type: Type.STRING, enum: [...ASSUMPTION_ORIGINS] },
           evidenceStatus: {
             type: Type.STRING,
-            enum: [
-              'supported',
-              'partially_supported',
-              'asserted_only',
-              'unsupported',
-              'contradictory',
-              'not_yet_testable',
-              'not_applicable',
-            ],
+            enum: [...EVIDENCE_STATUSES],
           },
           evidenceQuality: {
             type: Type.STRING,
-            enum: [
-              'financial_audited',
-              'cohort',
-              'operational',
-              'customer_quoted',
-              'technical',
-              'market_research',
-              'unverified',
-            ],
+            enum: [...EVIDENCE_QUALITY_CLASSES],
           },
           supportingClaimIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           supportingSlideNumbers: { type: Type.ARRAY, items: { type: Type.INTEGER } },
           supportingFacts: { type: Type.ARRAY, items: { type: Type.STRING } },
+          supportingEvidenceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           contradictingClaimIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           contradictingSlideNumbers: { type: Type.ARRAY, items: { type: Type.INTEGER } },
+          contradictingEvidenceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           isThesisBottleneck: { type: Type.BOOLEAN },
           bottleneckReason: { type: Type.STRING },
           confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
@@ -151,9 +134,9 @@ const investmentCaseSchema: Schema = {
           targetId: { type: Type.STRING },
           relationship: {
             type: Type.STRING,
-            enum: ['enables', 'requires', 'amplifies', 'conflicts'],
+            enum: [...DEPENDENCY_RELATIONSHIPS],
           },
-          criticality: { type: Type.STRING, enum: ['critical', 'high', 'medium'] },
+          criticality: { type: Type.STRING, enum: [...ASSUMPTION_IMPORTANCES] },
           explanation: { type: Type.STRING },
         },
         required: ['id', 'sourceId', 'targetId', 'relationship', 'criticality', 'explanation'],
@@ -165,27 +148,21 @@ const investmentCaseSchema: Schema = {
         type: Type.OBJECT,
         properties: {
           id: { type: Type.STRING },
-          category: { type: Type.STRING },
+          category: { type: Type.STRING, enum: [...RISK_CATEGORIES] },
           title: { type: Type.STRING },
           description: { type: Type.STRING },
           riskType: {
             type: Type.STRING,
-            enum: [
-              'causal_gap',
-              'evidence_gap',
-              'contradiction',
-              'valuation',
-              'concentration',
-              'economics',
-              'execution',
-            ],
+            enum: [...RISK_TYPES],
           },
           whyItMatters: { type: Type.STRING },
           supportingEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
+          supportingEvidenceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           contradictingEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
+          contradictingEvidenceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           relatedAssumptionIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           relatedMechanismIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-          severity: { type: Type.STRING, enum: ['critical', 'material', 'moderate'] },
+          severity: { type: Type.STRING, enum: [...RISK_SEVERITIES] },
           confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
         },
         required: ['id', 'title', 'description', 'whyItMatters', 'severity'],
@@ -222,7 +199,7 @@ const investmentCaseSchema: Schema = {
           relatedRiskIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           answerability: {
             type: Type.STRING,
-            enum: ['well_supported', 'partially_supported', 'unanswered', 'contradictory'],
+            enum: [...QUESTION_ANSWERABILITIES],
           },
         },
         required: ['id', 'question', 'whyThisMatters', 'answerability'],
@@ -294,6 +271,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const evidenceCatalog = buildCanonicalEvidenceCorpusReferences(
+      profile || null,
+      claimMap || null,
+      diagnostics || null,
+      slideEvidence || null
+    );
+
+    const formattedEvidenceCatalog = `Available Evidence ID Catalog (Cite supportingEvidenceIds / contradictingEvidenceIds from this catalog):
+${evidenceCatalog.map((e) => `- ${e.id}: "${e.statement}" (${e.sourceType}${e.slideNumber ? `, Slide ${e.slideNumber}` : ''})`).join('\n')}`;
+
     const formattedContext = formatCompanyEvaluationContextForPrompt(evaluationContext);
     const formattedExpectations = formatEvaluationExpectationsForPrompt(evaluationExpectations);
 
@@ -322,7 +309,7 @@ CRITICAL CONSTRAINTS & RULES:
 4. REASON CAUSALLY: Connect Problem -> Wedge -> GTM -> Monetization -> Retention -> Market Expansion -> Defensibility.
 5. RESPECT MATURITY & ARCHETYPE: Use provided Evaluation Context and Expectations. Pre-seed/seed companies naturally have more unproven/not-yet-testable assumptions.
 6. EXPLICIT VS IMPLICIT: Distinguish claims made explicitly in the deck from necessary implicit assumptions required by the business model.
-7. CLAIM STRENGTH != EVIDENCE STRENGTH: Generic assertions ("Huge retention", "$50B TAM") are asserted_only / unsupported. Concrete metrics ("118% NRR across 24 customers") are supported.
+7. EVIDENCE CITATION: Populate supportingEvidenceIds and contradictingEvidenceIds strictly using valid IDs from the provided Evidence Catalog.
 8. SANITIZE PROHIBITED TERMS: Never include "fundable", "unfundable", "investment ready", "funding probability".`;
 
     const userPrompt = `Company Evaluation Context:
@@ -332,6 +319,9 @@ Evaluation Expectations:
 ${formattedExpectations}
 
 ${formattedEvaluation}
+
+Evidence ID Catalog:
+${formattedEvidenceCatalog}
 
 Profile Summary:
 ${JSON.stringify(profile || {}, null, 2)}
@@ -374,7 +364,8 @@ Reconstruct the Causal Investment Case according to the JSON schema.`;
       profile || null,
       claimMap || null,
       diagnostics || null,
-      slideEvidence || null
+      slideEvidence || null,
+      evaluationContext || null
     );
 
     return NextResponse.json({
