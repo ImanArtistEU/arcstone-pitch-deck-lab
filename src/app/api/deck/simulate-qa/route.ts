@@ -175,7 +175,17 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { profile, claims, diagnostics, evaluation, selectedTriggers, stage, evaluationContext, evaluationExpectations } = body;
+    const {
+      profile,
+      claims,
+      diagnostics,
+      evaluation,
+      investmentCase,
+      selectedTriggers,
+      stage,
+      evaluationContext,
+      evaluationExpectations,
+    } = body;
 
     const declaredStage = evaluationContext?.declaredStage?.normalizedStage || stage || profile?.fundraising?.currentStage?.rawValue || 'unknown';
     const observedMaturity = evaluationContext?.observedMaturity?.value || 'unknown';
@@ -245,6 +255,22 @@ EXPECTATION RULES FOR QA GENERATION:
 - Market Size (TAM): ${profile?.market?.TAM?.rawValue || 'Unstated'}
 - Competitors: ${profile?.competition?.namedCompetitors?.rawValue || 'None'}
 - Founders: ${profile?.team?.founders?.map((f: { name: string; role?: string }) => `${f.name} (${f.role || 'Founder'})`).join(', ') || 'Unspecified'}
+
+### RECONSTRUCTED INVESTMENT CASE:
+- Reconstructed Thesis: ${investmentCase?.investmentThesis?.reconstructedThesis || 'Not reconstructed'}
+- Thesis Bottlenecks: ${JSON.stringify(investmentCase?.caseSummary?.thesisBottlenecks || [], null, 2)}
+- Critical Unproven What-Must-Be-True Assumptions: ${JSON.stringify(
+  (investmentCase?.whatMustBeTrue || [])
+    .filter((w: { importance: string; evidenceStatus: string }) => w.importance === 'critical' && w.evidenceStatus !== 'supported')
+    .map((w: { statement: string; evidenceStatus: string }) => `${w.statement} (${w.evidenceStatus})`),
+  null,
+  2
+)}
+- Material Investment Case Risks: ${JSON.stringify(
+  (investmentCase?.risks || []).map((r: { title: string; severity: string }) => `${r.title} [${r.severity}]`),
+  null,
+  2
+)}
 
 ### HIGH-VALUE TRIGGERS IDENTIFIED FOR THIS DECK:
 ${JSON.stringify(selectedTriggers || [], null, 2)}

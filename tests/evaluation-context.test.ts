@@ -853,4 +853,40 @@ describe('Batch 5A.1 - Evaluation Context & Expectation Policy Integration Suite
     expect(context.observedMaturity.value).toBe('early_market_evidence');
     expect(context.functionalMaturity.tractionMaturity).toBe('pilots_or_loi');
   });
+
+  // 88-91. Batch 5B Paid-User Edge Case Precedence Tests
+  it('88. "500 users" and "500 active users" do NOT count as paid customers', () => {
+    const profileA = { traction: { customerCount: pf('500 users') } } as unknown as StartupProfile;
+    const profileB = { traction: { customerCount: pf('500 active users') } } as unknown as StartupProfile;
+
+    const contextA = buildCompanyEvaluationContext(profileA, null, null);
+    const contextB = buildCompanyEvaluationContext(profileB, null, null);
+
+    expect(contextA.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+    expect(contextB.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+  });
+
+  it('89. "500 free users" is explicitly non-paying', () => {
+    const profile = { traction: { customerCount: pf('500 free users') } } as unknown as StartupProfile;
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+  });
+
+  it('90. "500 paid users" and "500 paying users" ARE valid commercial evidence', () => {
+    const profileA = { traction: { customerCount: pf('500 paid users') } } as unknown as StartupProfile;
+    const profileB = { traction: { customerCount: pf('500 paying users') } } as unknown as StartupProfile;
+
+    const contextA = buildCompanyEvaluationContext(profileA, null, null);
+    const contextB = buildCompanyEvaluationContext(profileB, null, null);
+
+    expect(contextA.functionalMaturity.tractionMaturity).toBe('early_customers');
+    expect(contextB.functionalMaturity.tractionMaturity).toBe('early_customers');
+  });
+
+  it('91. "10 paid pilots" remains non-paying because pilot overrides paid modifier', () => {
+    const profile = { traction: { customerCount: pf('10 paid pilots') } } as unknown as StartupProfile;
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    expect(context.functionalMaturity.tractionMaturity).toBe('pilots_or_loi');
+    expect(context.functionalMaturity.tractionMaturity).not.toBe('early_customers');
+  });
 });

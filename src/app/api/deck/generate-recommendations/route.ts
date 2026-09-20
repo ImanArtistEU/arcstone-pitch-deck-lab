@@ -209,6 +209,7 @@ export async function POST(req: NextRequest) {
       claimMap,
       diagnostics,
       evaluation,
+      investmentCase,
       simulatorResult,
       selectedTriggers,
       totalPages = 10,
@@ -300,6 +301,22 @@ ${(evaluation?.dimensions || [])
   .filter((d: any) => d.status === 'UNDERDEVELOPED' || d.status === 'MISSING' || d.status === 'CONTRADICTORY')
   .map((d: any) => `- [${d.id}] ${d.dimensionName} (${d.status}, ${d.weaknessType}): ${d.finding}`)
   .join('\n')}
+
+INVESTMENT CASE RECONSTRUCTION (BATCH 5B):
+- Reconstructed Thesis: ${investmentCase?.investmentThesis?.reconstructedThesis || 'Not reconstructed'}
+- Thesis Bottlenecks: ${JSON.stringify(investmentCase?.caseSummary?.thesisBottlenecks || [], null, 2)}
+- Unproven What-Must-Be-True Assumptions: ${JSON.stringify(
+  (investmentCase?.whatMustBeTrue || [])
+    .filter((w: any) => w.evidenceStatus !== 'supported')
+    .map((w: any) => `- [${w.id}] ${w.statement} (${w.importance}, ${w.evidenceStatus})`),
+  null,
+  2
+)}
+- Material Investment Case Risks: ${JSON.stringify(
+  (investmentCase?.risks || []).map((r: any) => `- [${r.id}] ${r.title} (${r.severity})`),
+  null,
+  2
+)}
 
 INVESTOR SIMULATOR QUESTIONS (BATCH 4B):
 ${(simulatorResult?.questions || [])

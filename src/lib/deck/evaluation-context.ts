@@ -101,6 +101,32 @@ function normalizeStage(rawStage?: string): DeclaredStageContext {
 export function isExplicitlyNonPayingCustomerText(text?: string): boolean {
   if (!text) return false;
   const s = text.toLowerCase();
+
+  // Explicit commercial modifiers override generic "user"
+  const hasExplicitPaidModifier =
+    s.includes('paid user') ||
+    s.includes('paying user') ||
+    s.includes('paid client') ||
+    s.includes('paying client') ||
+    s.includes('paid customer') ||
+    s.includes('paying customer') ||
+    s.includes('paid account') ||
+    s.includes('paying account');
+
+  if (hasExplicitPaidModifier) {
+    if (
+      s.includes('pilot') ||
+      s.includes('trial') ||
+      s.includes('loi') ||
+      s.includes('letter of intent') ||
+      s.includes('waitlist') ||
+      s.includes('free')
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   return (
     s.includes('pilot') ||
     s.includes('trial') ||
@@ -110,6 +136,7 @@ export function isExplicitlyNonPayingCustomerText(text?: string): boolean {
     s.includes('free') ||
     s.includes('signup') ||
     s.includes('registered user') ||
+    s.includes('active user') ||
     s.includes('user')
   );
 }
