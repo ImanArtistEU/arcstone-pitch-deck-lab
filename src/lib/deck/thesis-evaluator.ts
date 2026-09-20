@@ -11,6 +11,7 @@ import {
   StrongElement,
   DimensionSummary,
 } from '@/types/evaluation';
+import { getOrBuildEvaluationContextAndExpectations } from './evaluation-context';
 
 export interface EvaluationRunResult {
   status: 'success' | 'skipped' | 'partial' | 'error';
@@ -227,7 +228,9 @@ export function computeDimensionSummary(dimensions: DimensionEvaluation[]): Dime
  */
 function getFieldSlides(field?: { evidence?: { slideNumber: number }[] }): number[] {
   if (!field || !Array.isArray(field.evidence)) return [];
-  return field.evidence.map((e) => e.slideNumber);
+  return field.evidence
+    .map((e) => e.slideNumber)
+    .filter((s) => typeof s === 'number' && s > 0);
 }
 
 /**
@@ -241,39 +244,42 @@ export function generateDeterministicEvaluation(
 ): FundraisingEvaluation {
   const problemField = profile?.problemSolution?.problemStatement || profile?.problemSolution?.valueProposition;
   const problemText = problemField?.rawValue;
-  const problemSlides = getFieldSlides(problemField).length > 0 ? getFieldSlides(problemField) : [1];
+  const problemSlides = getFieldSlides(problemField);
 
   const solutionField = profile?.problemSolution?.productDescription;
   const solutionText = solutionField?.rawValue;
-  const solutionSlides = getFieldSlides(solutionField).length > 0 ? getFieldSlides(solutionField) : [2];
+  const solutionSlides = getFieldSlides(solutionField);
+
+  const customerField = profile?.customerICP?.customerType;
+  const customerSlides = getFieldSlides(customerField);
 
   const foundersCount = profile?.team?.founders?.length || 0;
   const foundersSummary = foundersCount > 0 ? `${foundersCount} founders identified: ${profile!.team.founders.map((f) => f.name).join(', ')}` : 'Founding team details not identified.';
-  const foundersSlides = profile?.team?.founders?.map((f) => f.slideNumber) || [];
+  const foundersSlides = profile?.team?.founders?.map((f) => f.slideNumber).filter((s): s is number => typeof s === 'number' && s > 0) || [];
 
   const pillars: ThesisPillar[] = [
     {
       pillar: 'Problem',
       communicated: !!problemText,
-      summary: problemText || 'Problem context not explicitly summarized.',
+      summary: problemText || 'Insufficient deck evidence to establish problem context.',
       slideNumbers: problemSlides,
     },
     {
       pillar: 'Customer',
-      communicated: !!profile?.customerICP?.customerType?.rawValue,
-      summary: profile?.customerICP?.customerType?.rawValue || 'Target customer ICP not clearly established.',
-      slideNumbers: getFieldSlides(profile?.customerICP?.customerType).length > 0 ? getFieldSlides(profile?.customerICP?.customerType) : [1],
+      communicated: !!customerField?.rawValue,
+      summary: customerField?.rawValue || 'Insufficient deck evidence to establish target customer ICP.',
+      slideNumbers: customerSlides,
     },
     {
       pillar: 'Solution',
       communicated: !!solutionText,
-      summary: solutionText || 'Core solution product described in deck.',
+      summary: solutionText || 'Insufficient deck evidence to describe product solution.',
       slideNumbers: solutionSlides,
     },
     {
       pillar: 'Why Now',
       communicated: false,
-      summary: 'Market urgency or technological timing catalyst not prominently identified.',
+      summary: 'Insufficient deck evidence to establish market urgency or timing catalyst.',
       slideNumbers: [],
     },
     {
@@ -442,31 +448,61 @@ export function generateDeterministicEvaluation(
     reconstructedThesis: pillars,
     dimensions,
     narrativeChain: [
-      { fromPillar: 'Problem', toPillar: 'Customer', status: 'clear', assessment: 'Target customer experiencing the problem is established.', slideNumbers: [1] },
-      { fromPillar: 'Customer', toPillar: 'Solution', status: 'clear', assessment: 'Solution directly addresses customer workflow pain.', slideNumbers: [2] },
-      { fromPillar: 'Solution', toPillar: 'Traction', status: 'clear', assessment: 'Early adoption demonstrates demand for the product.', slideNumbers: [3] },
-      { fromPillar: 'Traction', toPillar: 'Fundraise', status: 'clear', assessment: 'Capital requested to scale validated progress.', slideNumbers: [Math.min(totalPages, 4)] },
-    ],
-    investorObjections: [
       {
-        id: 'obj-1',
-        objection: 'How repeatable is customer acquisition without dedicated distribution channels?',
-        triggeringGap: 'GTM details and acquisition costs are not detailed in the deck.',
-        relevantSlides: [1],
-        importance: 'material',
+        fromPillar: 'Problem',
+        toPillar: 'Customer',
+        status: problemText && customerField?.rawValue ? 'clear' : 'missing',
+        assessment: problemText && customerField?.rawValue ? 'Target customer experiencing the problem is established.' : 'Insufficient deck evidence to link problem to target customer.',
+        slideNumbers: problemSlides.length > 0 ? problemSlides : customerSlides,
+      },
+      {
+        fromPillar: 'Customer',
+        toPillar: 'Solution',
+        status: customerField?.rawValue && solutionText ? 'clear' : 'missing',
+        assessment: customerField?.rawValue && solutionText ? 'Solution addresses customer workflow pain.' : 'Insufficient deck evidence to link customer to solution.',
+        slideNumbers: solutionSlides,
+      },
+      {
+        fromPillar: 'Solution',
+        toPillar: 'Traction',
+        status: solutionText && profile?.traction?.ARR?.rawValue ? 'clear' : 'missing',
+        assessment: solutionText && profile?.traction?.ARR?.rawValue ? 'Customer adoption demonstrates demand.' : 'Insufficient deck evidence to connect solution to quantitative traction.',
+        slideNumbers: getFieldSlides(profile?.traction?.ARR),
+      },
+      {
+        fromPillar: 'Traction',
+        toPillar: 'Fundraise',
+        status: profile?.fundraising?.amountBeingRaised?.rawValue ? 'clear' : 'missing',
+        assessment: profile?.fundraising?.amountBeingRaised?.rawValue ? 'Capital ask stated in deck.' : 'Insufficient deck evidence to link traction to capital ask.',
+        slideNumbers: getFieldSlides(profile?.fundraising?.amountBeingRaised),
       },
     ],
-    strongElements: [
-      {
-        id: 'str-1',
-        pillarOrDimension: 'Problem Clarity',
-        highlight: 'Clear articulation of operational pain point.',
-        evidence: problemText || 'Problem statement on early slides',
-        slideNumbers: [1],
-      },
-    ],
+    investorObjections: profile?.goToMarket?.salesMotion?.rawValue
+      ? []
+      : [
+          {
+            id: 'obj-1',
+            objection: 'How repeatable is customer acquisition without dedicated distribution channels?',
+            triggeringGap: 'GTM details and acquisition costs are not detailed in the deck.',
+            relevantSlides: [],
+            importance: 'material',
+          },
+        ],
+    strongElements: problemText
+      ? [
+          {
+            id: 'str-1',
+            pillarOrDimension: 'Problem Clarity',
+            highlight: 'Clear articulation of operational pain point.',
+            evidence: problemText,
+            slideNumbers: problemSlides,
+          },
+        ]
+      : [],
     dimensionSummary,
-    overallSynthesis: 'The pitch deck communicates a distinct problem and solution. Core narrative coherence is established, with primary areas for further development around distribution repeatability and quantitative market sizing.',
+    overallSynthesis: problemText && solutionText
+      ? 'The pitch deck communicates a problem and solution. Primary areas for development remain around distribution repeatability and quantitative market sizing.'
+      : 'Insufficient deck evidence to establish core thesis parameters. Further factual details required across problem, solution, or traction.',
     evaluatedAt: new Date(),
   };
 }
@@ -484,6 +520,12 @@ export async function executeFundraisingEvaluation(
   const validClaimIds = new Set<string>((claimMap?.claims || []).map((c) => c.id));
 
   try {
+    const { evaluationContext, evaluationExpectations } = getOrBuildEvaluationContextAndExpectations(
+      profile,
+      claimMap,
+      diagnostics
+    );
+
     const slideEvidence = hybridResult.slides.map((s) => ({
       pageNumber: s.pageNumber,
       text: s.nativeExtraction?.rawText?.slice(0, 500) || s.visualExtraction?.summary || '',
@@ -497,6 +539,8 @@ export async function executeFundraisingEvaluation(
         claims: claimMap?.claims || [],
         diagnosticsSummary: diagnostics?.summary,
         slideEvidence,
+        evaluationContext,
+        evaluationExpectations,
       }),
     });
 

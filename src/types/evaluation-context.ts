@@ -53,9 +53,21 @@ export type BusinessModelArchetype =
   | 'other'
   | 'unknown';
 
+export type TechnologyCategory =
+  | 'ai_application'
+  | 'ai_infrastructure'
+  | 'deeptech'
+  | 'developer_tools'
+  | 'software'
+  | 'hardware'
+  | 'biotech_healthtech'
+  | 'fintech'
+  | 'unknown';
+
 export interface BusinessModelContext {
   primaryArchetype: BusinessModelArchetype;
   secondaryArchetypes: BusinessModelArchetype[];
+  technologyCategory?: TechnologyCategory;
   confidence: 'high' | 'medium' | 'low';
   basis: string[];
 }
@@ -120,7 +132,7 @@ export interface FunctionalMaturity {
 }
 
 export interface EvidenceReference {
-  slideNumber: number;
+  slideNumber?: number;
   topic: string;
   statement: string;
 }
@@ -137,4 +149,3 @@ export interface CompanyEvaluationContext {
   contextWarnings: ContextWarning[];
   evidenceReferences: EvidenceReference[];
 }
-

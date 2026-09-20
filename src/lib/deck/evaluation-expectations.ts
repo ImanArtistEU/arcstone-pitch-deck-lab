@@ -21,6 +21,7 @@ export interface EvaluationExpectations {
     relevantCount: number;
     notYetExpectedCount: number;
     notApplicableCount: number;
+    unknownCount: number;
   };
 }
 
@@ -40,6 +41,9 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   const stage = context.declaredStage.normalizedStage;
   const maturity = context.observedMaturity.value;
   const archetype = context.businessModel.primaryArchetype;
+
+  const isUnknownMaturity = maturity === 'unknown';
+  const isUnknownArchetype = archetype === 'unknown';
 
   // 1. Problem Evidence
   expectations['problemEvidence'] = {
@@ -63,7 +67,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   };
 
   // 4. Traction
-  if (maturity === 'concept_validation') {
+  if (isUnknownMaturity) {
+    expectations['traction'] = {
+      dimension: 'Traction',
+      status: 'UNKNOWN',
+      rationale: 'Insufficient deck evidence to assign operating maturity, so quantitative traction requirement is undetermined.',
+    };
+  } else if (maturity === 'concept_validation') {
     expectations['traction'] = {
       dimension: 'Traction',
       status: 'OPTIONAL',
@@ -84,7 +94,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   }
 
   // 5. Retention (Net Revenue Retention / Cohorts)
-  if (maturity === 'concept_validation' || maturity === 'product_building') {
+  if (isUnknownMaturity) {
+    expectations['retention'] = {
+      dimension: 'Retention & Cohorts',
+      status: 'UNKNOWN',
+      rationale: 'Operating maturity is unknown, so retention expectations cannot be determined.',
+    };
+  } else if (maturity === 'concept_validation' || maturity === 'product_building') {
     expectations['retention'] = {
       dimension: 'Retention & Cohorts',
       status: 'NOT_YET_EXPECTED',
@@ -105,7 +121,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   }
 
   // 6. Growth & Velocity
-  if (maturity === 'concept_validation' || maturity === 'product_building') {
+  if (isUnknownMaturity) {
+    expectations['growth'] = {
+      dimension: 'Growth Rate',
+      status: 'UNKNOWN',
+      rationale: 'Operating maturity is unknown, so growth velocity expectations cannot be determined.',
+    };
+  } else if (maturity === 'concept_validation' || maturity === 'product_building') {
     expectations['growth'] = {
       dimension: 'Growth Rate',
       status: 'NOT_YET_EXPECTED',
@@ -120,7 +142,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   }
 
   // 7. Distribution & GTM Motion
-  if (maturity === 'concept_validation') {
+  if (isUnknownMaturity) {
+    expectations['distribution'] = {
+      dimension: 'Distribution Strategy',
+      status: 'UNKNOWN',
+      rationale: 'Distribution requirements depend on verified operating maturity.',
+    };
+  } else if (maturity === 'concept_validation') {
     expectations['distribution'] = {
       dimension: 'Distribution Strategy',
       status: 'RELEVANT',
@@ -135,7 +163,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   }
 
   // 8. Sales Repeatability
-  if (maturity === 'concept_validation' || maturity === 'product_building' || maturity === 'early_market_evidence') {
+  if (isUnknownMaturity) {
+    expectations['salesRepeatability'] = {
+      dimension: 'Sales Repeatability',
+      status: 'UNKNOWN',
+      rationale: 'Sales repeatability expectations require established operating maturity.',
+    };
+  } else if (maturity === 'concept_validation' || maturity === 'product_building' || maturity === 'early_market_evidence') {
     expectations['salesRepeatability'] = {
       dimension: 'Sales Repeatability',
       status: 'NOT_YET_EXPECTED',
@@ -150,7 +184,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   }
 
   // 9. Pricing
-  if (archetype === 'b2b_saas' || archetype === 'enterprise_software' || archetype === 'smb_software' || archetype === 'transactional') {
+  if (isUnknownArchetype) {
+    expectations['pricing'] = {
+      dimension: 'Pricing Tiers & ACV',
+      status: 'RELEVANT',
+      rationale: 'Monetization structure is relevant once business model archetype is clarified.',
+    };
+  } else if (archetype === 'b2b_saas' || archetype === 'enterprise_software' || archetype === 'smb_software' || archetype === 'transactional') {
     expectations['pricing'] = {
       dimension: 'Pricing Tiers & ACV',
       status: 'EXPECTED',
@@ -165,7 +205,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   }
 
   // 10. Unit Economics (CAC, Payback)
-  if (maturity === 'concept_validation' || maturity === 'product_building') {
+  if (isUnknownMaturity) {
+    expectations['unitEconomics'] = {
+      dimension: 'Unit Economics',
+      status: 'UNKNOWN',
+      rationale: 'Unit-level economics requirements depend on verified operating maturity.',
+    };
+  } else if (maturity === 'concept_validation' || maturity === 'product_building') {
     expectations['unitEconomics'] = {
       dimension: 'Unit Economics',
       status: 'NOT_YET_EXPECTED',
@@ -181,11 +227,25 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
 
   // 11. Gross Margin
   if (archetype === 'hardware' || archetype === 'deeptech' || context.capitalRegulatory.capitalIntensity === 'high') {
-    expectations['grossMargin'] = {
-      dimension: 'Gross Margin',
-      status: 'EXPECTED',
-      rationale: 'Hardware, deeptech, or high capital intensity models require explicit gross margin breakdowns.',
-    };
+    if (maturity === 'concept_validation' || maturity === 'product_building') {
+      expectations['grossMargin'] = {
+        dimension: 'Gross Margin',
+        status: 'NOT_YET_EXPECTED',
+        rationale: 'For precommercial deeptech and hardware, technical validation and manufacturing feasibility take precedence over current gross margin.',
+      };
+    } else if (maturity === 'early_market_evidence') {
+      expectations['grossMargin'] = {
+        dimension: 'Gross Margin',
+        status: 'RELEVANT',
+        rationale: 'Early commercial deeptech/hardware demonstrates unit cost structure directionally as manufacturing ramps.',
+      };
+    } else {
+      expectations['grossMargin'] = {
+        dimension: 'Gross Margin',
+        status: 'EXPECTED',
+        rationale: 'Commercial hardware and deeptech models require explicit gross margin and unit cost breakdowns.',
+      };
+    }
   } else {
     expectations['grossMargin'] = {
       dimension: 'Gross Margin',
@@ -198,7 +258,7 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   expectations['market'] = {
     dimension: 'Market Opportunity',
     status: 'EXPECTED',
-    rationale: 'Market opportunity definition and TAM derivation are expected across all fundraising decks.',
+    rationale: `Market opportunity definition and TAM derivation are expected across all fundraising decks (${stage !== 'unknown' ? stage : 'all'} stage).`,
   };
 
   // 13. Competition & Differentiation
@@ -234,11 +294,17 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   expectations['capitalPlan'] = {
     dimension: 'Fundraising Ask & Milestone Plan',
     status: 'EXPECTED',
-    rationale: 'Stating the capital requested and milestone allocation is expected in fundraising decks.',
+    rationale: `Stating the capital requested and milestone allocation is expected in fundraising decks (${stage !== 'unknown' ? stage : 'all'} stage).`,
   };
 
   // 17. Archetype-Specific Expectations: Marketplace Liquidity
-  if (archetype === 'marketplace') {
+  if (isUnknownArchetype) {
+    expectations['marketplaceLiquidity'] = {
+      dimension: 'Marketplace Liquidity & Take Rate',
+      status: 'UNKNOWN',
+      rationale: 'Business model archetype is unknown, so marketplace liquidity relevance cannot be determined.',
+    };
+  } else if (archetype === 'marketplace') {
     expectations['marketplaceLiquidity'] = {
       dimension: 'Marketplace Liquidity & Take Rate',
       status: maturity === 'concept_validation' ? 'RELEVANT' : 'EXPECTED',
@@ -253,7 +319,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   }
 
   // 18. Archetype-Specific Expectations: Clinical Validation
-  if (archetype === 'biotech_healthtech' || context.capitalRegulatory.regulatoryIntensity === 'high') {
+  if (isUnknownArchetype) {
+    expectations['clinicalValidation'] = {
+      dimension: 'Clinical & Regulatory Validation',
+      status: 'UNKNOWN',
+      rationale: 'Business model archetype is unknown, so clinical validation relevance cannot be determined.',
+    };
+  } else if (archetype === 'biotech_healthtech' || context.capitalRegulatory.regulatoryIntensity === 'high') {
     expectations['clinicalValidation'] = {
       dimension: 'Clinical & Regulatory Validation',
       status: 'EXPECTED',
@@ -268,7 +340,13 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
   }
 
   // 19. Archetype-Specific Expectations: Developer Adoption
-  if (archetype === 'developer_tools') {
+  if (isUnknownArchetype) {
+    expectations['developerAdoption'] = {
+      dimension: 'Developer Community & API Usage',
+      status: 'UNKNOWN',
+      rationale: 'Business model archetype is unknown, so developer adoption relevance cannot be determined.',
+    };
+  } else if (archetype === 'developer_tools') {
     expectations['developerAdoption'] = {
       dimension: 'Developer Community & API Usage',
       status: 'EXPECTED',
@@ -282,15 +360,14 @@ export function buildEvaluationExpectations(context: CompanyEvaluationContext): 
     };
   }
 
-  // Summary counts
   const values = Object.values(expectations);
   const summary = {
     expectedCount: values.filter((e) => e.status === 'EXPECTED').length,
     relevantCount: values.filter((e) => e.status === 'RELEVANT').length,
     notYetExpectedCount: values.filter((e) => e.status === 'NOT_YET_EXPECTED').length,
     notApplicableCount: values.filter((e) => e.status === 'NOT_APPLICABLE').length,
+    unknownCount: values.filter((e) => e.status === 'UNKNOWN').length,
   };
 
   return { expectations, summary };
 }
-

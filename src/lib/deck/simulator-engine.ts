@@ -13,6 +13,8 @@ import {
   AnswerabilityStatus,
 } from '@/types/simulator';
 
+import { getOrBuildEvaluationContextAndExpectations } from './evaluation-context';
+
 export interface SimulatorRunResult {
   status: 'success' | 'partial' | 'error';
   data: InvestorSimulatorResult;
@@ -337,9 +339,11 @@ export function generateDeterministicSimulatorQuestions(
 
   // 1. Contradictions (Critical)
   for (const c of diagnostics?.contradictions || []) {
+    const s1 = c.conflictingStatements[0]?.slideNumber ? `Slide ${c.conflictingStatements[0].slideNumber}` : 'One deck section';
+    const s2 = c.conflictingStatements[1]?.slideNumber ? `Slide ${c.conflictingStatements[1].slideNumber}` : 'another deck section';
     questions.push({
       id: `sim-q-${qCount++}`,
-      question: `Slide ${c.conflictingStatements[0]?.slideNumber || 1} indicates "${c.conflictingStatements[0]?.text || ''}", whereas Slide ${c.conflictingStatements[1]?.slideNumber || 2} states "${c.conflictingStatements[1]?.text || ''}". How do you reconcile this discrepancy?`,
+      question: `${s1} indicates "${c.conflictingStatements[0]?.text || ''}", whereas ${s2} states "${c.conflictingStatements[1]?.text || ''}". How do you reconcile this discrepancy?`,
       category: 'traction',
       priority: 'CRITICAL',
       questionType: 'CLARIFICATION',
@@ -530,17 +534,19 @@ export function generateDeterministicSimulatorQuestions(
         relatedDimension: 'Fundraising Ask',
         relatedClaimIds: [],
         relatedDiagnosticIds: [],
-        slideNumbers: profile.fundraising.amountBeingRaised.evidence?.map((e) => e.slideNumber) || [10],
+        slideNumbers: (profile.fundraising.amountBeingRaised.evidence?.map((e) => e.slideNumber).filter((s): s is number => typeof s === 'number' && s > 0)) || [],
         triggerSummary: `Target raise amount of ${askVal} stated in deck.`,
       },
       currentAnswerability: 'WELL_SUPPORTED',
-      availableEvidence: [
-        {
-          slideNumber: profile.fundraising.amountBeingRaised.evidence?.[0]?.slideNumber || 10,
-          statement: `Raising ${askVal} allocated to: ${useVal}`,
-          source: 'native_pdf',
-        },
-      ],
+      availableEvidence: profile.fundraising.amountBeingRaised.evidence?.[0]?.slideNumber
+        ? [
+            {
+              slideNumber: profile.fundraising.amountBeingRaised.evidence[0].slideNumber,
+              statement: `Raising ${askVal} allocated to: ${useVal}`,
+              source: 'native_pdf',
+            },
+          ]
+        : [],
       missingInformation: [
         'Month-by-month burn rate forecast',
         'Target ARR / customer metrics required for Series A round',
@@ -604,12 +610,12 @@ export function generateDeterministicSimulatorQuestions(
         relatedDimension: 'Problem Clarity',
         relatedClaimIds: [],
         relatedDiagnosticIds: [],
-        slideNumbers: [2],
+        slideNumbers: profile?.problemSolution?.targetUserPain?.evidence?.[0]?.slideNumber ? [profile.problemSolution.targetUserPain.evidence[0].slideNumber] : [],
         triggerSummary: 'Pre-seed customer problem formulation.',
       },
       currentAnswerability: 'PARTIALLY_SUPPORTED',
-      availableEvidence: profile?.problemSolution?.targetUserPain?.rawValue
-        ? [{ slideNumber: 2, statement: profile.problemSolution.targetUserPain.rawValue, source: 'native_pdf' }]
+      availableEvidence: profile?.problemSolution?.targetUserPain?.rawValue && profile.problemSolution.targetUserPain.evidence?.[0]?.slideNumber
+        ? [{ slideNumber: profile.problemSolution.targetUserPain.evidence[0].slideNumber, statement: profile.problemSolution.targetUserPain.rawValue, source: 'native_pdf' }]
         : [],
       missingInformation: ['Number of user discovery interviews completed', 'Customer willingness-to-pay validation signals'],
       preparationGuidance: 'Share qualitative discoveries, verbatim user quotes, and specific workflow observations.',
@@ -703,17 +709,17 @@ export function generateDeterministicSimulatorQuestions(
       category: 'team',
       priority: 'MEDIUM',
       questionType: 'EXECUTION',
-      whyInvestorAsks: 'Seed-stage success is constrained by hiring velocity in engineering, product, and enterprise go-to-market.',
+      whyInvestorAsks: 'Early-stage success is constrained by hiring velocity in engineering, product, and go-to-market.',
       trigger: {
         relatedDimension: 'Team & Execution Capability',
         relatedClaimIds: [],
         relatedDiagnosticIds: [],
-        slideNumbers: [11],
+        slideNumbers: founders.map((f) => f.slideNumber).filter((s): s is number => typeof s === 'number' && s > 0),
         triggerSummary: 'Team composition and scaling roadmap.',
       },
       currentAnswerability: founders.length > 0 ? 'PARTIALLY_SUPPORTED' : 'UNANSWERED',
-      availableEvidence: founders.length > 0
-        ? [{ slideNumber: founders[0]?.slideNumber || 11, statement: founderSummary, source: 'native_pdf' as const }]
+      availableEvidence: founders.length > 0 && typeof founders[0]?.slideNumber === 'number' && founders[0].slideNumber > 0
+        ? [{ slideNumber: founders[0].slideNumber, statement: founderSummary, source: 'native_pdf' as const }]
         : [],
       missingInformation: ['Specific hiring priority roles', 'Recruiting pipeline or talent network'],
       preparationGuidance: 'Identify top 2-3 key roles needed (e.g. VP Sales, Lead Systems Architect) and timeline to hire.',
@@ -786,8 +792,13 @@ export async function executeInvestorSimulation(
   ]);
 
   try {
+    const { evaluationContext, evaluationExpectations } = getOrBuildEvaluationContextAndExpectations(
+      profile,
+      claimMap,
+      diagnostics
+    );
     const selectedTriggers = selectDeterministicTriggers(profile, claimMap, diagnostics, evaluation);
-    const stage = profile?.fundraising?.currentStage?.rawValue || 'Seed';
+    const stage = evaluationContext.declaredStage.normalizedStage;
 
     const response = await fetch('/api/deck/simulate-qa', {
       method: 'POST',
@@ -799,6 +810,8 @@ export async function executeInvestorSimulation(
         evaluation,
         selectedTriggers,
         stage,
+        evaluationContext,
+        evaluationExpectations,
       }),
     });
 

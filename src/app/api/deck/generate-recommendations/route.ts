@@ -175,7 +175,11 @@ const recommendationsSchema: Schema = {
           'category',
           'title',
           'problem',
+          'problemClass',
           'whyItMatters',
+          'investorInterpretation',
+          'whyNow',
+          'resolutionCriteria',
           'actionType',
           'targetSlides',
           'relatedClaims',
@@ -207,6 +211,8 @@ export async function POST(req: NextRequest) {
       simulatorResult,
       selectedTriggers,
       totalPages = 10,
+      evaluationContext,
+      evaluationExpectations,
     } = body;
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -249,6 +255,13 @@ CRITICAL OPERATIONAL RULES:
     const userPrompt = `Synthesize actionable recommendations for this pitch deck based on the full analytical stack:
 
 TOTAL SLIDES IN DECK: ${totalPages}
+
+EVALUATION CONTEXT & EXPECTATIONS:
+Stage: ${evaluationContext?.declaredStage?.rawStage || 'unknown'} (revenue maturity: ${evaluationContext?.operatingMaturity?.revenueMaturity || 'unknown'})
+Archetype: ${evaluationContext?.businessModelContext?.primaryArchetype || 'unknown'} (Tech: ${evaluationContext?.businessModelContext?.technologyCategory || 'unknown'})
+Sales Motion: ${evaluationContext?.goToMarketContext?.salesMotion || 'unknown'}
+Capital Intensity: ${evaluationContext?.intensityProfile?.capitalIntensity || 'unknown'}, Regulatory Intensity: ${evaluationContext?.intensityProfile?.regulatoryIntensity || 'unknown'}
+Summary Expectations: ${JSON.stringify(evaluationExpectations?.summary || {})}
 
 STARTUP PROFILE SUMMARY:
 Company: ${profile?.identity?.companyName?.rawValue || 'Unknown'}

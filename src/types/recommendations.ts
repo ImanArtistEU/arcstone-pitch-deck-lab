@@ -69,11 +69,11 @@ export interface FounderRecommendation {
   category: string; // e.g. 'traction', 'business_model', 'market', 'gtm', 'competition', 'narrative', 'ask'
   title: string;
   problem: string;
-  problemClass?: ProblemClass;
+  problemClass: ProblemClass;
   whyItMatters: string;
-  investorInterpretation?: string;
-  whyNow?: string;
-  resolutionCriteria?: string[];
+  investorInterpretation: string;
+  whyNow: string;
+  resolutionCriteria: string[];
   actionType: RecommendationActionType;
   targetSlides: number[];
   isNewSlideOrSection?: boolean;
@@ -148,4 +148,3 @@ export interface RecommendationsState {
   result: ActionPlanResult | null;
   errorMessage: string | null;
 }
-

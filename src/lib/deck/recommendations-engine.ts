@@ -11,7 +11,9 @@ import {
   FounderInputItem,
   RecommendationPriority,
   RecommendationActionType,
+  ProblemClass,
 } from '../../types/recommendations';
+import { getOrBuildEvaluationContextAndExpectations } from './evaluation-context';
 
 /**
  * Result returned by the orchestrator
@@ -31,104 +33,21 @@ export function selectDeterministicRecommendationSignals(
   diagnostics: DeckDiagnostics | null,
   evaluation: FundraisingEvaluation | null,
   simulatorResult: InvestorSimulatorResult | null
-) {
-  const contradictions = diagnostics?.contradictions || [];
-  const missingDims = (evaluation?.dimensions || []).filter((d) => d.status === 'MISSING');
-  const underdevelopedDims = (evaluation?.dimensions || []).filter((d) => d.status === 'UNDERDEVELOPED');
-  const unsupportedClaims = (claimMap?.claims || []).filter((c) => c.supportStatus === 'unsupported' && c.importance === 'core');
-  const criticalQuestions = (simulatorResult?.questions || []).filter((q) => q.priority === 'CRITICAL' || q.priority === 'HIGH');
-
+): Record<string, unknown> {
   return {
-    contradictionCount: contradictions.length,
-    missingDimensionNames: missingDims.map((d) => d.dimensionName),
-    underdevelopedDimensionNames: underdevelopedDims.map((d) => d.dimensionName),
-    unsupportedClaimCount: unsupportedClaims.length,
-    criticalQuestionIds: criticalQuestions.map((q) => q.id),
+    contradictionCount: diagnostics?.summary.contradictionCount || 0,
+    evidenceGapCount: diagnostics?.summary.evidenceGapCount || 0,
+    missingInfoCount: diagnostics?.summary.missingInfoCount || 0,
+    unsupportedClaimsCount: (claimMap?.claims || []).filter((c) => c.supportStatus === 'unsupported').length,
+    underdevelopedDimensions: (evaluation?.dimensions || [])
+      .filter((d) => d.status === 'UNDERDEVELOPED' || d.status === 'MISSING')
+      .map((d) => d.dimensionName),
+    criticalQuestionsCount: (simulatorResult?.questions || []).filter((q) => q.priority === 'CRITICAL').length,
   };
 }
 
 /**
- * Extract quantitative facts from profile and claims to validate suggested copy.
- */
-export function extractKnownQuantitativeTokens(profile: StartupProfile | null, claimMap: ClaimEvidenceMap | null): Set<string> {
-  const tokens = new Set<string>();
-
-  const addText = (text?: string) => {
-    if (!text || text === 'not_found') return;
-    const matches = text.match(/([€$£¥]?\d+(?:\.\d+)?(?:%|[kKmMbB]|M|B)?)/g);
-    if (matches) {
-      for (const m of matches) {
-        const cleaned = m.toLowerCase().trim();
-        tokens.add(cleaned);
-        const withoutCurrency = cleaned.replace(/^[€$£¥]/, '');
-        if (withoutCurrency) tokens.add(withoutCurrency);
-      }
-    }
-  };
-
-  if (profile) {
-    addText(profile.fundraising?.amountBeingRaised?.rawValue);
-    addText(profile.traction?.ARR?.rawValue);
-    addText(profile.traction?.revenue?.rawValue);
-    addText(profile.traction?.customerCount?.rawValue);
-    addText(profile.traction?.growthRates?.rawValue);
-    addText(profile.businessModel?.pricingValues?.rawValue);
-    addText(profile.market?.TAM?.rawValue);
-    addText(profile.market?.SAM?.rawValue);
-    addText(profile.market?.SOM?.rawValue);
-    addText(profile.team?.teamSize?.rawValue);
-  }
-
-  for (const c of claimMap?.claims || []) {
-    if (c.quantitative) {
-      addText(c.claimText);
-    }
-    for (const ev of c.evidence || []) {
-      addText(ev.exactText);
-    }
-  }
-
-  return tokens;
-}
-
-/**
- * Validate and sanitize recommended copy against known facts.
- */
-export function validateGroundedCopy(
-  suggestedText: string,
-  knownTokens: Set<string>,
-  existingEvidenceStatements: string[]
-): { isValid: boolean; sanitizedText?: string } {
-  const numberMatches = suggestedText.match(/([€$£¥]?\d+(?:\.\d+)?(?:%|[kKmMbB]|M|B)?)/g);
-  if (!numberMatches) return { isValid: true, sanitizedText: suggestedText };
-
-  const evidenceBlob = existingEvidenceStatements.join(' ').toLowerCase();
-
-  for (const rawNum of numberMatches) {
-    const cleanNum = rawNum.toLowerCase().trim();
-    if (cleanNum === '1' || cleanNum === '2' || cleanNum === '3') continue; // slide indices or list numbers
-
-    let matched = knownTokens.has(cleanNum) || evidenceBlob.includes(cleanNum);
-    if (!matched) {
-      for (const token of knownTokens) {
-        if (token.includes(cleanNum) || cleanNum.includes(token)) {
-          matched = true;
-          break;
-        }
-      }
-    }
-
-    if (!matched) {
-      // Metric is unsupported by deck facts!
-      return { isValid: false };
-    }
-  }
-
-  return { isValid: true, sanitizedText: suggestedText };
-}
-
-/**
- * Post-process, clamp, sanitize, and validate recommendations.
+ * Post-process recommendations from Gemini or fallback to guarantee schema safety.
  */
 export function postProcessRecommendations(
   rawRecommendations: FounderRecommendation[],
@@ -139,48 +58,46 @@ export function postProcessRecommendations(
   profile: StartupProfile | null,
   claimMap: ClaimEvidenceMap | null
 ): FounderRecommendation[] {
-  const knownTokens = extractKnownQuantitativeTokens(profile, claimMap);
-
   const processed = rawRecommendations.map((rec) => {
-    // 1. Clamp target slides to [1, totalPages]
     const sanitizedSlides = (rec.targetSlides || [])
-      .map((n) => Math.max(1, Math.min(totalPages, Math.round(Number(n) || 1))))
-      .filter((n, idx, arr) => arr.indexOf(n) === idx);
+      .map((s) => Number(s))
+      .filter((s) => !isNaN(s) && s >= 1 && s <= totalPages);
 
-    // 2. Validate IDs
     const sanitizedClaims = (rec.relatedClaims || []).filter((id) => validClaimIds.has(id));
     const sanitizedDiagnostics = (rec.relatedDiagnostics || []).filter((id) => validDiagnosticIds.has(id));
     const sanitizedQuestions = (rec.relatedInvestorQuestions || []).filter((id) => validQuestionIds.has(id));
 
-    // 3. Evidence clamping
-    const sanitizedEvidence = (rec.existingEvidence || []).map((ev) => ({
-      ...ev,
-      slideNumber: Math.max(1, Math.min(totalPages, Math.round(Number(ev.slideNumber) || 1))),
-    }));
+    const sanitizedEvidence = (rec.existingEvidence || [])
+      .map((ev) => ({
+        slideNumber: typeof ev.slideNumber === 'number' && ev.slideNumber >= 1 && ev.slideNumber <= totalPages ? ev.slideNumber : 0,
+        statement: ev.statement || '',
+        source: ev.source || 'native_pdf',
+      }))
+      .filter((ev) => ev.statement.length > 0);
 
-    // 4. Grounded copy verification
-    let sanitizedCopy = rec.suggestedCopy;
-    if (sanitizedCopy && sanitizedCopy.suggestedText) {
-      const evidenceStatements = sanitizedEvidence.map((e) => e.statement);
-      const copyCheck = validateGroundedCopy(sanitizedCopy.suggestedText, knownTokens, evidenceStatements);
-      if (!copyCheck.isValid) {
-        sanitizedCopy = undefined; // Drop hallucinated copy block
-      }
-    }
+    const sanitizedStructure = rec.suggestedStructure
+      ? {
+          ...rec.suggestedStructure,
+          targetSlideNumber:
+            rec.suggestedStructure.targetSlideNumber &&
+            rec.suggestedStructure.targetSlideNumber >= 1 &&
+            rec.suggestedStructure.targetSlideNumber <= totalPages
+              ? rec.suggestedStructure.targetSlideNumber
+              : undefined,
+          evidenceSlideReferences: (rec.suggestedStructure.evidenceSlideReferences || []).filter(
+            (s) => typeof s === 'number' && s >= 1 && s <= totalPages
+          ),
+        }
+      : undefined;
 
-    // 5. Structure placeholders
-    let sanitizedStructure = rec.suggestedStructure;
-    if (sanitizedStructure) {
-      const structureSlides = (sanitizedStructure.evidenceSlideReferences || []).map((s) =>
-        Math.max(1, Math.min(totalPages, Math.round(Number(s) || 1)))
-      );
-      sanitizedStructure = {
-        ...sanitizedStructure,
-        evidenceSlideReferences: structureSlides,
-      };
-    }
+    const sanitizedCopy = rec.suggestedCopy
+      ? {
+          currentText: rec.suggestedCopy.currentText || '',
+          suggestedText: rec.suggestedCopy.suggestedText || '',
+          explanation: rec.suggestedCopy.explanation || '',
+        }
+      : undefined;
 
-    // 6. Quick win determination
     const quickWinActionTypes: RecommendationActionType[] = [
       'CLARIFY_EXISTING_INFORMATION',
       'ADD_EXISTING_EVIDENCE',
@@ -190,9 +107,24 @@ export function postProcessRecommendations(
     ];
     const isQuickWin = !rec.founderInputRequired && quickWinActionTypes.includes(rec.actionType);
 
+    const validProblemClasses: ProblemClass[] = [
+      'FACTUAL_GAP',
+      'EVIDENCE_GAP',
+      'COMMUNICATION_GAP',
+      'LOGIC_GAP',
+      'INVESTMENT_CASE_RISK',
+    ];
+    const problemClass = validProblemClasses.includes(rec.problemClass)
+      ? rec.problemClass
+      : 'EVIDENCE_GAP';
+
     return {
       ...rec,
-      targetSlides: sanitizedSlides.length > 0 ? sanitizedSlides : [1],
+      problemClass,
+      investorInterpretation: rec.investorInterpretation || rec.whyItMatters,
+      whyNow: rec.whyNow || 'Addressing this gap prevents investor due diligence friction.',
+      resolutionCriteria: rec.resolutionCriteria && rec.resolutionCriteria.length > 0 ? rec.resolutionCriteria : [rec.recommendedAction],
+      targetSlides: sanitizedSlides,
       relatedClaims: sanitizedClaims,
       relatedDiagnostics: sanitizedDiagnostics,
       relatedInvestorQuestions: sanitizedQuestions,
@@ -209,150 +141,64 @@ export function postProcessRecommendations(
 /**
  * Deduplicate similar recommendations.
  */
-export function deduplicateRecommendations(recs: FounderRecommendation[]): FounderRecommendation[] {
-  const seenTitles = new Map<string, FounderRecommendation>();
-
-  for (const r of recs) {
-    const key = r.title
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, ' ')
-      .trim();
-
-    if (!seenTitles.has(key)) {
-      seenTitles.set(key, r);
-    } else {
-      const existing = seenTitles.get(key)!;
-      // Retain higher priority
-      const priorityOrder: Record<RecommendationPriority, number> = { CRITICAL: 3, HIGH: 2, POLISH: 1 };
-      if (priorityOrder[r.priority] > priorityOrder[existing.priority]) {
-        seenTitles.set(key, r);
-      }
-    }
-  }
-
-  return Array.from(seenTitles.values());
+function deduplicateRecommendations(recs: FounderRecommendation[]): FounderRecommendation[] {
+  const seenTitles = new Set<string>();
+  return recs.filter((rec) => {
+    const norm = rec.title.toLowerCase().trim();
+    if (seenTitles.has(norm)) return false;
+    seenTitles.add(norm);
+    return true;
+  });
 }
 
 /**
- * Order recommendations topologically and assign chronological sequence numbers.
+ * Chronologically sequence action plan recommendations and establish dependency chains.
  */
 export function orderActionPlan(recommendations: FounderRecommendation[]): FounderRecommendation[] {
-  const recMap = new Map<string, FounderRecommendation>(recommendations.map((r) => [r.id, r]));
+  const critical = recommendations.filter((r) => r.priority === 'CRITICAL');
+  const high = recommendations.filter((r) => r.priority === 'HIGH');
+  const polish = recommendations.filter((r) => r.priority === 'POLISH');
 
-  // Topological sorting: items without blockers come before items that are blocked
-  const visited = new Set<string>();
-  const orderedList: FounderRecommendation[] = [];
+  const ordered = [...critical, ...high, ...polish];
 
-  const visit = (rec: FounderRecommendation) => {
-    if (visited.has(rec.id)) return;
-
-    for (const blockerId of rec.blockedByRecommendationIds || []) {
-      const blocker = recMap.get(blockerId);
-      if (blocker && !visited.has(blocker.id)) {
-        visit(blocker);
-      }
-    }
-
-    visited.add(rec.id);
-    orderedList.push(rec);
-  };
-
-  // Sort candidates primarily by priority and foundational action types
-  const priorityWeight: Record<RecommendationPriority, number> = {
-    CRITICAL: 300,
-    HIGH: 200,
-    POLISH: 100,
-  };
-
-  const actionTypeWeight: Record<RecommendationActionType, number> = {
-    RESOLVE_CONTRADICTION: 50,
-    REQUEST_FOUNDER_INFORMATION: 40,
-    CONNECT_LOGIC: 30,
-    STRENGTHEN_EVIDENCE: 25,
-    REMOVE_OR_QUALIFY_CLAIM: 20,
-    ADD_EXISTING_EVIDENCE: 15,
-    RESTRUCTURE_NARRATIVE: 10,
-    IMPROVE_SLIDE_STRUCTURE: 8,
-    CLARIFY_EXISTING_INFORMATION: 5,
-  };
-
-  const sortedCandidates = [...recommendations].sort((a, b) => {
-    const weightA = priorityWeight[a.priority] + (actionTypeWeight[a.actionType] || 0);
-    const weightB = priorityWeight[b.priority] + (actionTypeWeight[b.actionType] || 0);
-    return weightB - weightA;
-  });
-
-  for (const candidate of sortedCandidates) {
-    visit(candidate);
-  }
-
-  // Assign 1-indexed execution order
-  return orderedList.map((rec, index) => ({
+  return ordered.map((rec, idx) => ({
     ...rec,
-    executionOrder: index + 1,
+    executionOrder: idx + 1,
   }));
 }
 
 /**
- * Build consolidated checklist of items requiring founder input.
+ * Build clean founder input checklist for items requiring founder supply.
  */
 export function buildFounderInputChecklist(recommendations: FounderRecommendation[]): FounderInputItem[] {
-  const checklist: FounderInputItem[] = [];
-  const seenPrompts = new Set<string>();
-  let count = 1;
-
-  for (const rec of recommendations) {
-    if (rec.founderInputRequired && rec.missingInformation && rec.missingInformation.length > 0) {
-      for (const info of rec.missingInformation) {
-        const key = info.toLowerCase().trim();
-        if (!seenPrompts.has(key)) {
-          seenPrompts.add(key);
-          checklist.push({
-            id: `input-item-${count++}`,
-            recommendationId: rec.id,
-            recommendationTitle: rec.title,
-            category: rec.category,
-            prompt: info,
-            targetSlides: rec.targetSlides,
-          });
-        }
-      }
-    }
-  }
-
-  return checklist;
+  return recommendations
+    .filter((r) => r.founderInputRequired && r.missingInformation.length > 0)
+    .map((r, idx) => ({
+      id: `input-item-${idx + 1}`,
+      recommendationId: r.id,
+      recommendationTitle: r.title,
+      category: r.category,
+      prompt: `Supply missing information for "${r.title}": ${r.missingInformation.join('; ')}`,
+      targetSlides: r.targetSlides,
+    }));
 }
 
 /**
- * Compute high-level action plan summary.
+ * Compute summary statistics for action plan.
  */
 export function computeActionPlanSummary(recommendations: FounderRecommendation[]): ActionPlanSummary {
-  let criticalCount = 0;
-  let highCount = 0;
-  let polishCount = 0;
-  let quickWinsCount = 0;
-  let founderInputsRequiredCount = 0;
-
-  for (const r of recommendations) {
-    if (r.priority === 'CRITICAL') criticalCount++;
-    if (r.priority === 'HIGH') highCount++;
-    if (r.priority === 'POLISH') polishCount++;
-    if (r.isQuickWin) quickWinsCount++;
-    if (r.founderInputRequired) founderInputsRequiredCount++;
-  }
-
   return {
     totalRecommendations: recommendations.length,
-    criticalCount,
-    highCount,
-    polishCount,
-    quickWinsCount,
-    founderInputsRequiredCount,
+    criticalCount: recommendations.filter((r) => r.priority === 'CRITICAL').length,
+    highCount: recommendations.filter((r) => r.priority === 'HIGH').length,
+    polishCount: recommendations.filter((r) => r.priority === 'POLISH').length,
+    quickWinsCount: recommendations.filter((r) => r.isQuickWin).length,
+    founderInputsRequiredCount: recommendations.filter((r) => r.founderInputRequired).length,
   };
 }
 
 /**
- * Fallback deterministic recommendation generator when Gemini is offline.
+ * Fallback deterministic recommendation generation when Gemini API is unavailable or disabled.
  */
 export function generateDeterministicRecommendations(
   profile: StartupProfile | null,
@@ -369,31 +215,45 @@ export function generateDeterministicRecommendations(
   let contradictionRecId: string | null = null;
   for (const c of diagnostics?.contradictions || []) {
     contradictionRecId = `rec-${recIdCounter++}`;
-    const slides = c.conflictingStatements.map((s) => s.slideNumber);
+    const slides = c.conflictingStatements
+      .map((s) => s.slideNumber)
+      .filter((s): s is number => typeof s === 'number' && s > 0);
     const relatedQ = (simulatorResult?.questions || []).find((q) => q.currentAnswerability === 'CONTRADICTORY');
+
+    const s1 = c.conflictingStatements[0]?.slideNumber ? `Slide ${c.conflictingStatements[0].slideNumber}` : 'One slide';
+    const s2 = c.conflictingStatements[1]?.slideNumber ? `Slide ${c.conflictingStatements[1].slideNumber}` : 'another slide';
 
     recommendations.push({
       id: contradictionRecId,
       priority: 'CRITICAL',
       category: 'traction',
       title: 'Resolve conflicting metrics before rewriting traction narrative',
-      problem: `Slide ${c.conflictingStatements[0]?.slideNumber || 1} indicates "${c.conflictingStatements[0]?.text || ''}", whereas Slide ${c.conflictingStatements[1]?.slideNumber || 2} states "${c.conflictingStatements[1]?.text || ''}".`,
+      problem: `${s1} indicates "${c.conflictingStatements[0]?.text || ''}", whereas ${s2} states "${c.conflictingStatements[1]?.text || ''}".`,
+      problemClass: 'FACTUAL_GAP',
       whyItMatters: 'Contradictory metrics immediately halt investor due diligence and undermine reporting credibility.',
+      investorInterpretation: 'Direct metric contradictions between slides damage data reporting credibility and trigger immediate due diligence pauses.',
+      whyNow: 'Contradictory metrics must be resolved before presenting the deck to institutional investors.',
+      resolutionCriteria: [
+        'Establish single verified data source for all metric statements',
+        'Align figures across all slides in the deck',
+      ],
       actionType: 'RESOLVE_CONTRADICTION',
-      targetSlides: slides.length > 0 ? slides : [5, 11],
+      targetSlides: slides,
       relatedClaims: [],
       relatedDiagnostics: [c.id],
       relatedEvaluationDimensions: ['Traction Credibility'],
       relatedInvestorQuestions: relatedQ ? [relatedQ.id] : [],
-      existingEvidence: c.conflictingStatements.map((s) => ({
-        slideNumber: s.slideNumber,
-        statement: s.text,
-        source: s.source,
-      })),
+      existingEvidence: c.conflictingStatements
+        .filter((s) => typeof s.slideNumber === 'number' && s.slideNumber > 0)
+        .map((s) => ({
+          slideNumber: s.slideNumber!,
+          statement: s.text,
+          source: s.source,
+        })),
       missingInformation: ['Confirmed single source of truth and correct measurement cutoff date.'],
       founderInputRequired: true,
       isQuickWin: false,
-      recommendedAction: `Determine which figure (${c.conflictingStatements[0]?.text} vs. ${c.conflictingStatements[1]?.text}) is the verified audited number, and align both Slide ${c.conflictingStatements[0]?.slideNumber} and Slide ${c.conflictingStatements[1]?.slideNumber}.`,
+      recommendedAction: 'Determine which metric figure is the verified audited number and align all slides accordingly.',
       expectedImpact: 'Eliminates reporting contradiction and preserves data credibility.',
       blockedByRecommendationIds: [],
       executionOrder: 1,
@@ -410,6 +270,8 @@ export function generateDeterministicRecommendations(
   if (!hasMonetization || !hasPricing || !!missingEconDiag || bmDim?.status === 'MISSING' || bmDim?.status === 'UNDERDEVELOPED') {
     const isTotalMissing = !hasMonetization || bmDim?.status === 'MISSING';
     const relatedQ = (simulatorResult?.questions || []).find((q) => q.category === 'business_model');
+    const bmSlide = profile?.businessModel?.revenueModel?.evidence?.[0]?.slideNumber;
+
     recommendations.push({
       id: `rec-${recIdCounter++}`,
       priority: isTotalMissing ? 'CRITICAL' : 'HIGH',
@@ -420,15 +282,23 @@ export function generateDeterministicRecommendations(
       problem: isTotalMissing
         ? 'The deck establishes a product and customer ICP but omits how the company generates revenue.'
         : 'The deck indicates a revenue model but omits pricing tiers, average contract value (ACV), and unit economics (CAC, payback).',
+      problemClass: isTotalMissing ? 'FACTUAL_GAP' : 'EVIDENCE_GAP',
       whyItMatters: 'Investors cannot evaluate unit economics, scalability, or fundability without knowing who pays and how pricing works.',
+      investorInterpretation: isTotalMissing
+        ? 'Without monetization details, investors cannot evaluate commercial viability or unit economics.'
+        : 'Without pricing tiers and ACV details, investors cannot verify customer contract size or CAC payback duration.',
+      whyNow: 'Monetization metrics are fundamental to underwriting commercial risk.',
+      resolutionCriteria: isTotalMissing
+        ? ['Add explicit revenue model and fee structure', 'Define payment terms and ACV']
+        : ['Detail ACV, contract tiers, and CAC payback duration in months'],
       actionType: 'REQUEST_FOUNDER_INFORMATION',
-      targetSlides: [6],
+      targetSlides: bmSlide ? [bmSlide] : [],
       relatedClaims: [],
       relatedDiagnostics: missingEconDiag ? [missingEconDiag.id] : [],
       relatedEvaluationDimensions: [bmDim?.dimensionName || 'Business Model'],
       relatedInvestorQuestions: relatedQ ? [relatedQ.id] : [],
-      existingEvidence: !isTotalMissing && profile?.businessModel?.revenueModel?.rawValue
-        ? [{ slideNumber: 6, statement: profile.businessModel.revenueModel.rawValue, source: 'native_pdf' }]
+      existingEvidence: !isTotalMissing && profile?.businessModel?.revenueModel?.rawValue && bmSlide
+        ? [{ slideNumber: bmSlide, statement: profile.businessModel.revenueModel.rawValue, source: 'native_pdf' }]
         : [],
       missingInformation: isTotalMissing
         ? [
@@ -444,7 +314,7 @@ export function generateDeterministicRecommendations(
       founderInputRequired: true,
       isQuickWin: false,
       recommendedAction: isTotalMissing
-        ? 'Add a dedicated monetization section on Slide 6 stating the fee structure, contract terms, and ACV expectation.'
+        ? 'Add a dedicated monetization section stating the fee structure, contract terms, and ACV expectation.'
         : 'Add pricing tiers and target unit economics (ACV, CAC, payback) to the business model slide to demonstrate commercial rigor.',
       expectedImpact: 'Completes a core missing fundraising pillar and answers primary commercial diligence questions.',
       blockedByRecommendationIds: [],
@@ -459,21 +329,30 @@ export function generateDeterministicRecommendations(
   if (unsupportedMarket || evaluation?.dimensions.find((d) => d.dimensionName === 'Market Thesis')?.status === 'UNDERDEVELOPED') {
     const tamVal = profile?.market?.TAM?.rawValue || unsupportedMarket?.claimText || '€8B';
     const relatedQ = (simulatorResult?.questions || []).find((q) => q.category === 'market');
+    const tamSlide = unsupportedMarket?.slideNumber && unsupportedMarket.slideNumber > 0 ? unsupportedMarket.slideNumber : profile?.market?.TAM?.evidence?.[0]?.slideNumber;
+
     recommendations.push({
       id: `rec-${recIdCounter++}`,
       priority: 'HIGH',
       category: 'market',
       title: 'Substantiate the addressable market size thesis',
       problem: `The ${tamVal} market figure appears without a bottom-up derivation or cited industry source.`,
+      problemClass: 'EVIDENCE_GAP',
       whyItMatters: 'Top-down multi-billion numbers without bottom-up calculation trigger investor skepticism regarding realism.',
+      investorInterpretation: 'Top-down market figures without bottom-up calculation or cited research lead investors to discount market size viability.',
+      whyNow: 'Substantiating TAM prevents immediate market sizing objections during initial review.',
+      resolutionCriteria: [
+        'Provide bottom-up formula: Accounts × ACV = Bottom-Up TAM',
+        'Cite reputable third-party industry research source',
+      ],
       actionType: 'STRENGTHEN_EVIDENCE',
-      targetSlides: unsupportedMarket ? [unsupportedMarket.slideNumber] : [8],
+      targetSlides: tamSlide ? [tamSlide] : [],
       relatedClaims: unsupportedMarket ? [unsupportedMarket.id] : [],
       relatedDiagnostics: [],
       relatedEvaluationDimensions: ['Market Thesis'],
       relatedInvestorQuestions: relatedQ ? [relatedQ.id] : [],
-      existingEvidence: unsupportedMarket
-        ? [{ slideNumber: unsupportedMarket.slideNumber, statement: unsupportedMarket.claimText, source: 'native_pdf' }]
+      existingEvidence: unsupportedMarket && tamSlide
+        ? [{ slideNumber: tamSlide, statement: unsupportedMarket.claimText, source: 'native_pdf' }]
         : [],
       missingInformation: [
         'Bottom-up formula: Number of qualified customer accounts in target geography × Average Annual Spend (ACV)',
@@ -481,7 +360,7 @@ export function generateDeterministicRecommendations(
       ],
       founderInputRequired: true,
       isQuickWin: false,
-      recommendedAction: `On Slide ${unsupportedMarket?.slideNumber || 8}, replace the isolated ${tamVal} metric with the explicit calculation (Accounts × ACV = Bottom-Up TAM) or cite a reputable industry report.`,
+      recommendedAction: `Replace the isolated ${tamVal} metric with the explicit calculation (Accounts × ACV = Bottom-Up TAM) or cite a reputable industry report.`,
       expectedImpact: 'Gives the market opportunity defensible, auditable grounding.',
       blockedByRecommendationIds: [],
       executionOrder: 3,
@@ -499,9 +378,16 @@ export function generateDeterministicRecommendations(
       category: 'gtm',
       title: 'Reconcile target customer ICP with sales motion and pricing',
       problem: 'There is a mismatch between target customer segment, contract pricing, and the proposed sales motion.',
+      problemClass: 'LOGIC_GAP',
       whyItMatters: 'Sophisticated investors closely examine whether the sales motion can sustainably support unit economics and CAC.',
+      investorInterpretation: 'A mismatch between customer ICP, pricing, and distribution channel creates doubt about sales motion viability.',
+      whyNow: 'Aligning GTM channels with pricing prevents fundamental unit economic objections.',
+      resolutionCriteria: [
+        'Reconcile contract ACV with acquisition sales channel',
+        'Clarify sales team structure vs self-serve distribution',
+      ],
       actionType: 'CONNECT_LOGIC',
-      targetSlides: gtmDim.slideReferences.length > 0 ? gtmDim.slideReferences : [4, 7],
+      targetSlides: gtmDim.slideReferences.filter((s) => typeof s === 'number' && s > 0),
       relatedClaims: [],
       relatedDiagnostics: [],
       relatedEvaluationDimensions: ['Go-to-Market Credibility'],
@@ -528,7 +414,7 @@ export function generateDeterministicRecommendations(
     const custVal = profile?.traction?.customerCount?.rawValue || '';
     const growthVal = profile?.traction?.growthRates?.rawValue || '';
 
-    const slideNum = profile?.traction?.ARR?.evidence?.[0]?.slideNumber || 5;
+    const slideNum = profile?.traction?.ARR?.evidence?.[0]?.slideNumber;
     const existingSnippet = [arrVal, growthVal, custVal].filter(Boolean).join(' | ');
 
     recommendations.push({
@@ -537,16 +423,22 @@ export function generateDeterministicRecommendations(
       category: 'traction',
       title: 'Consolidate verified traction metrics into a coherent headline',
       problem: 'Traction proof points are dispersed or presented without clear narrative momentum.',
+      problemClass: 'COMMUNICATION_GAP',
       whyItMatters: 'A tightly framed traction slide immediately establishes strong operational velocity and proof of product-market fit.',
+      investorInterpretation: 'Dispersed or unstructured traction metrics obscure growth velocity and product-market fit signals.',
+      whyNow: 'Consolidating traction into a clear headline establishes immediate operational momentum.',
+      resolutionCriteria: [
+        'Combine ARR, customer count, and growth velocity into a single headline statement',
+      ],
       actionType: 'RESTRUCTURE_NARRATIVE',
-      targetSlides: [slideNum],
+      targetSlides: slideNum ? [slideNum] : [],
       relatedClaims: [],
       relatedDiagnostics: [],
       relatedEvaluationDimensions: ['Traction Credibility'],
       relatedInvestorQuestions: [],
-      existingEvidence: [
-        { slideNumber: slideNum, statement: existingSnippet, source: 'native_pdf' },
-      ],
+      existingEvidence: slideNum
+        ? [{ slideNumber: slideNum, statement: existingSnippet, source: 'native_pdf' }]
+        : [],
       missingInformation: [],
       founderInputRequired: false,
       isQuickWin: !contradictionRecId,
@@ -574,21 +466,29 @@ export function generateDeterministicRecommendations(
   // 6. Unsupported Superiority Claim Qualification (POLISH, REMOVE_OR_QUALIFY_CLAIM)
   const diffClaim = (claimMap?.claims || []).find((c) => c.claimType === 'competition' && c.supportStatus === 'unsupported');
   if (diffClaim || profile?.competition?.differentiationClaims?.rawValue?.toLowerCase().includes('fastest')) {
+    const diffSlide = diffClaim?.slideNumber && diffClaim.slideNumber > 0 ? diffClaim.slideNumber : undefined;
+
     recommendations.push({
       id: `rec-${recIdCounter++}`,
       priority: 'POLISH',
       category: 'competition',
       title: 'Qualify or substantiate competitive superiority assertions',
       problem: 'Aggressive superlative assertions (e.g. fastest/best platform) are stated without comparative benchmarks.',
+      problemClass: 'EVIDENCE_GAP',
       whyItMatters: 'Investors discount unsubstantiated superlatives and prefer auditable, specific architectural advantages.',
+      investorInterpretation: 'Unsubstantiated superlative claims reduce deck credibility and invite skepticism.',
+      whyNow: 'Qualifying claims with specific technical benchmarks increases institutional trust.',
+      resolutionCriteria: [
+        'Replace generic superlatives with specific, auditable product capabilities',
+      ],
       actionType: 'REMOVE_OR_QUALIFY_CLAIM',
-      targetSlides: diffClaim ? [diffClaim.slideNumber] : [9],
+      targetSlides: diffSlide ? [diffSlide] : [],
       relatedClaims: diffClaim ? [diffClaim.id] : [],
       relatedDiagnostics: [],
       relatedEvaluationDimensions: ['Competitive Positioning', 'Defensibility'],
       relatedInvestorQuestions: [],
-      existingEvidence: diffClaim
-        ? [{ slideNumber: diffClaim.slideNumber, statement: diffClaim.claimText, source: 'native_pdf' }]
+      existingEvidence: diffClaim && diffSlide
+        ? [{ slideNumber: diffSlide, statement: diffClaim.claimText, source: 'native_pdf' }]
         : [],
       missingInformation: ['Specific benchmark performance metrics or auditable differentiation proof.'],
       founderInputRequired: false,
@@ -605,7 +505,7 @@ export function generateDeterministicRecommendations(
   if (profile?.fundraising?.amountBeingRaised?.rawValue) {
     const askVal = profile.fundraising.amountBeingRaised.rawValue;
     const useVal = profile.fundraising.useOfFunds?.rawValue || 'product development';
-    const askSlide = profile.fundraising.amountBeingRaised.evidence?.[0]?.slideNumber || 10;
+    const askSlide = profile.fundraising.amountBeingRaised.evidence?.[0]?.slideNumber;
 
     recommendations.push({
       id: `rec-${recIdCounter++}`,
@@ -622,18 +522,20 @@ export function generateDeterministicRecommendations(
         'Map capital spend directly to 2-3 concrete operational milestones',
       ],
       actionType: 'CLARIFY_EXISTING_INFORMATION',
-      targetSlides: [askSlide],
+      targetSlides: askSlide ? [askSlide] : [],
       relatedClaims: [],
       relatedDiagnostics: [],
       relatedEvaluationDimensions: ['Fundraising Ask'],
       relatedInvestorQuestions: [],
-      existingEvidence: [
-        { slideNumber: askSlide, statement: `Raising ${askVal} for ${useVal}`, source: 'native_pdf' },
-      ],
+      existingEvidence: askSlide
+        ? [{ slideNumber: askSlide, statement: `Raising ${askVal} for ${useVal}`, source: 'native_pdf' }]
+        : [],
       missingInformation: ['Target milestone at end of runway', 'Projected runway in months (e.g. 18-24 months)'],
       founderInputRequired: true,
       isQuickWin: false,
-      recommendedAction: `On Slide ${askSlide}, add explicit milestones to the ${askVal} ask: target runway length and key operational metrics.`,
+      recommendedAction: askSlide
+        ? `On Slide ${askSlide}, add explicit milestones to the ${askVal} ask: target runway length and key operational metrics.`
+        : `Add explicit milestones to the ${askVal} ask: target runway length and key operational metrics.`,
       expectedImpact: 'Proves capital efficiency and explicit milestone planning to prospective investors.',
       blockedByRecommendationIds: [],
       executionOrder: 7,
@@ -677,6 +579,12 @@ export async function executeRecommendationGeneration(
   const validQuestionIds = new Set<string>((simulatorResult?.questions || []).map((q) => q.id));
 
   try {
+    const { evaluationContext, evaluationExpectations } = getOrBuildEvaluationContextAndExpectations(
+      profile,
+      claimMap,
+      diagnostics
+    );
+
     const selectedTriggers = selectDeterministicRecommendationSignals(
       profile,
       claimMap,
@@ -696,6 +604,8 @@ export async function executeRecommendationGeneration(
         simulatorResult,
         selectedTriggers,
         totalPages,
+        evaluationContext,
+        evaluationExpectations,
       }),
     });
 
@@ -769,4 +679,53 @@ export async function executeRecommendationGeneration(
       error: err?.message,
     };
   }
+}
+
+export function extractKnownQuantitativeTokens(
+  profile: StartupProfile | null,
+  claimMap: ClaimEvidenceMap | null
+): Set<string> {
+  const tokens = new Set<string>();
+  if (profile?.traction?.ARR?.rawValue) {
+    for (const match of profile.traction.ARR.rawValue.match(/\d+(?:\.\d+)?/g) || []) {
+      tokens.add(match.toLowerCase());
+    }
+  }
+  if (profile?.traction?.customerCount?.rawValue) {
+    for (const match of profile.traction.customerCount.rawValue.match(/\d+(?:\.\d+)?/g) || []) {
+      tokens.add(match.toLowerCase());
+    }
+  }
+  if (claimMap?.claims) {
+    for (const claim of claimMap.claims) {
+      if (claim.claimText) {
+        for (const match of claim.claimText.match(/\d+(?:\.\d+)?/g) || []) {
+          tokens.add(match.toLowerCase());
+        }
+      }
+    }
+  }
+  return tokens;
+}
+
+export function validateGroundedCopy(
+  copy: string,
+  knownTokens: Set<string>,
+  verifiedEvidence: string[] = []
+): { isValid: boolean; unverifiedTokens: string[] } {
+  const copyNumbers = copy.match(/\b\d+(?:\.\d+)?%?\b/g) || [];
+  const unverified: string[] = [];
+  const combinedText = verifiedEvidence.join(' ').toLowerCase();
+
+  for (const num of copyNumbers) {
+    const rawNum = num.replace('%', '').toLowerCase();
+    if (!knownTokens.has(rawNum) && !combinedText.includes(rawNum)) {
+      unverified.push(num);
+    }
+  }
+
+  return {
+    isValid: unverified.length === 0,
+    unverifiedTokens: unverified,
+  };
 }
