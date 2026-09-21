@@ -26,6 +26,16 @@ import {
   QuestionAnswerability,
   InvestmentEvidenceReference,
   EvidenceSourceType,
+  MECHANISM_CATEGORIES,
+  ASSUMPTION_IMPORTANCES,
+  ASSUMPTION_ORIGINS,
+  EVIDENCE_STATUSES,
+  EVIDENCE_QUALITY_CLASSES,
+  DEPENDENCY_RELATIONSHIPS,
+  RISK_CATEGORIES,
+  RISK_TYPES,
+  RISK_SEVERITIES,
+  QUESTION_ANSWERABILITIES,
 } from '@/types/investment-case';
 
 /**
@@ -40,6 +50,256 @@ const PROHIBITED_TERMS_REGEX =
 export function sanitizeText(text: string): string {
   if (!text) return '';
   return text.replace(PROHIBITED_TERMS_REGEX, '[unproven thesis assumption]');
+}
+
+/**
+ * Validates and normalizes raw InvestmentCase runtime objects.
+ * Rejects invalid enum values or missing essential required fields by returning null.
+ */
+export function normalizeInvestmentCaseRuntime(raw: unknown): InvestmentCase | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, any>;
+
+  // Verify top-level object fields
+  if (!obj.investmentThesis || typeof obj.investmentThesis !== 'object') return null;
+  if (!Array.isArray(obj.mechanisms)) return null;
+  if (!Array.isArray(obj.whatMustBeTrue)) return null;
+  if (!Array.isArray(obj.dependencies)) return null;
+  if (!Array.isArray(obj.risks)) return null;
+  if (!Array.isArray(obj.contradictions)) return null;
+  if (!Array.isArray(obj.unresolvedQuestions)) return null;
+  if (!obj.caseSummary || typeof obj.caseSummary !== 'object') return null;
+
+  const t = obj.investmentThesis;
+  const requiredThesisStrings = [
+    'problem',
+    'targetCustomer',
+    'wedge',
+    'valueCreation',
+    'distribution',
+    'monetization',
+    'growth',
+    'marketExpansion',
+    'defensibility',
+    'teamAdvantage',
+    'capitalPath',
+    'summary',
+    'statedThesis',
+    'reconstructedThesis',
+  ];
+  for (const field of requiredThesisStrings) {
+    if (typeof t[field] !== 'string') return null;
+  }
+
+  // Check mechanisms
+  const mechanisms: InvestmentCaseMechanism[] = [];
+  for (const m of obj.mechanisms) {
+    if (!m || typeof m !== 'object') return null;
+    if (typeof m.id !== 'string' || typeof m.statement !== 'string') return null;
+    if (!MECHANISM_CATEGORIES.includes(m.category)) return null;
+    if (!ASSUMPTION_IMPORTANCES.includes(m.importance)) return null;
+    if (!EVIDENCE_STATUSES.includes(m.evidenceStatus)) return null;
+    if (!Array.isArray(m.supportingClaimIds)) return null;
+    if (!Array.isArray(m.supportingSlideNumbers)) return null;
+    if (!Array.isArray(m.supportingFacts)) return null;
+    if (!Array.isArray(m.contradictingClaimIds)) return null;
+    if (!Array.isArray(m.contradictingSlideNumbers)) return null;
+    if (m.confidence !== 'high' && m.confidence !== 'medium' && m.confidence !== 'low') return null;
+
+    mechanisms.push({
+      id: m.id,
+      category: m.category,
+      statement: m.statement,
+      importance: m.importance,
+      evidenceStatus: m.evidenceStatus,
+      supportingClaimIds: m.supportingClaimIds,
+      supportingSlideNumbers: m.supportingSlideNumbers,
+      supportingFacts: m.supportingFacts,
+      supportingEvidenceIds: Array.isArray(m.supportingEvidenceIds) ? m.supportingEvidenceIds : [],
+      contradictingClaimIds: m.contradictingClaimIds,
+      contradictingSlideNumbers: m.contradictingSlideNumbers,
+      contradictingEvidenceIds: Array.isArray(m.contradictingEvidenceIds) ? m.contradictingEvidenceIds : [],
+      confidence: m.confidence,
+    });
+  }
+
+  // Check whatMustBeTrue
+  const whatMustBeTrue: WhatMustBeTrue[] = [];
+  for (const w of obj.whatMustBeTrue) {
+    if (!w || typeof w !== 'object') return null;
+    if (typeof w.id !== 'string' || typeof w.statement !== 'string') return null;
+    if (typeof w.category !== 'string') return null;
+    if (!ASSUMPTION_IMPORTANCES.includes(w.importance)) return null;
+    if (!ASSUMPTION_ORIGINS.includes(w.assumptionOrigin)) return null;
+    if (!EVIDENCE_STATUSES.includes(w.evidenceStatus)) return null;
+    if (!EVIDENCE_QUALITY_CLASSES.includes(w.evidenceQuality)) return null;
+    if (!Array.isArray(w.supportingClaimIds)) return null;
+    if (!Array.isArray(w.supportingSlideNumbers)) return null;
+    if (!Array.isArray(w.supportingFacts)) return null;
+    if (!Array.isArray(w.contradictingClaimIds)) return null;
+    if (!Array.isArray(w.contradictingSlideNumbers)) return null;
+    if (typeof w.isThesisBottleneck !== 'boolean') return null;
+    if (w.confidence !== 'high' && w.confidence !== 'medium' && w.confidence !== 'low') return null;
+
+    whatMustBeTrue.push({
+      id: w.id,
+      statement: w.statement,
+      category: w.category,
+      importance: w.importance,
+      assumptionOrigin: w.assumptionOrigin,
+      evidenceStatus: w.evidenceStatus,
+      evidenceQuality: w.evidenceQuality,
+      supportingClaimIds: w.supportingClaimIds,
+      supportingSlideNumbers: w.supportingSlideNumbers,
+      supportingFacts: w.supportingFacts,
+      supportingEvidenceIds: Array.isArray(w.supportingEvidenceIds) ? w.supportingEvidenceIds : [],
+      contradictingClaimIds: w.contradictingClaimIds,
+      contradictingSlideNumbers: w.contradictingSlideNumbers,
+      contradictingEvidenceIds: Array.isArray(w.contradictingEvidenceIds) ? w.contradictingEvidenceIds : [],
+      isThesisBottleneck: w.isThesisBottleneck,
+      bottleneckReason: typeof w.bottleneckReason === 'string' ? w.bottleneckReason : undefined,
+      suggestedFounderAction: w.suggestedFounderAction && typeof w.suggestedFounderAction === 'object'
+        ? w.suggestedFounderAction
+        : undefined,
+      confidence: w.confidence,
+    });
+  }
+
+  // Check dependencies
+  const dependencies: InvestmentCaseDependency[] = [];
+  for (const d of obj.dependencies) {
+    if (!d || typeof d !== 'object') return null;
+    if (typeof d.id !== 'string' || typeof d.sourceId !== 'string' || typeof d.targetId !== 'string' || typeof d.explanation !== 'string') return null;
+    if (!DEPENDENCY_RELATIONSHIPS.includes(d.relationship)) return null;
+    if (!ASSUMPTION_IMPORTANCES.includes(d.criticality)) return null;
+
+    dependencies.push({
+      id: d.id,
+      sourceId: d.sourceId,
+      targetId: d.targetId,
+      relationship: d.relationship,
+      criticality: d.criticality,
+      explanation: d.explanation,
+    });
+  }
+
+  // Check risks
+  const risks: InvestmentCaseRisk[] = [];
+  for (const r of obj.risks) {
+    if (!r || typeof r !== 'object') return null;
+    if (typeof r.id !== 'string' || typeof r.title !== 'string' || typeof r.description !== 'string' || typeof r.whyItMatters !== 'string') return null;
+    if (!RISK_CATEGORIES.includes(r.category)) return null;
+    if (!RISK_TYPES.includes(r.riskType)) return null;
+    if (!RISK_SEVERITIES.includes(r.severity)) return null;
+    if (!Array.isArray(r.supportingEvidence)) return null;
+    if (!Array.isArray(r.contradictingEvidence)) return null;
+    if (!Array.isArray(r.relatedAssumptionIds)) return null;
+    if (!Array.isArray(r.relatedMechanismIds)) return null;
+    if (r.confidence !== 'high' && r.confidence !== 'medium' && r.confidence !== 'low') return null;
+
+    risks.push({
+      id: r.id,
+      category: r.category,
+      title: r.title,
+      description: r.description,
+      riskType: r.riskType,
+      whyItMatters: r.whyItMatters,
+      supportingEvidence: r.supportingEvidence,
+      supportingEvidenceIds: Array.isArray(r.supportingEvidenceIds) ? r.supportingEvidenceIds : [],
+      contradictingEvidence: r.contradictingEvidence,
+      contradictingEvidenceIds: Array.isArray(r.contradictingEvidenceIds) ? r.contradictingEvidenceIds : [],
+      relatedAssumptionIds: r.relatedAssumptionIds,
+      relatedMechanismIds: r.relatedMechanismIds,
+      severity: r.severity,
+      confidence: r.confidence,
+    });
+  }
+
+  // Check contradictions
+  const contradictions: InvestmentCaseContradiction[] = [];
+  for (const c of obj.contradictions) {
+    if (!c || typeof c !== 'object') return null;
+    if (typeof c.id !== 'string' || typeof c.topic !== 'string' || typeof c.statementA !== 'string' || typeof c.statementB !== 'string' || typeof c.impact !== 'string') return null;
+
+    contradictions.push({
+      id: c.id,
+      topic: c.topic,
+      statementA: c.statementA,
+      statementB: c.statementB,
+      slideA: typeof c.slideA === 'number' ? c.slideA : undefined,
+      slideB: typeof c.slideB === 'number' ? c.slideB : undefined,
+      claimIdA: typeof c.claimIdA === 'string' ? c.claimIdA : undefined,
+      claimIdB: typeof c.claimIdB === 'string' ? c.claimIdB : undefined,
+      impact: c.impact,
+    });
+  }
+
+  // Check unresolvedQuestions
+  const unresolvedQuestions: InvestmentCaseQuestion[] = [];
+  for (const q of obj.unresolvedQuestions) {
+    if (!q || typeof q !== 'object') return null;
+    if (typeof q.id !== 'string' || typeof q.question !== 'string' || typeof q.whyThisMatters !== 'string') return null;
+    if (!QUESTION_ANSWERABILITIES.includes(q.answerability)) return null;
+    if (!Array.isArray(q.relatedAssumptionIds)) return null;
+    if (!Array.isArray(q.relatedMechanismIds)) return null;
+    if (!Array.isArray(q.relatedRiskIds)) return null;
+
+    unresolvedQuestions.push({
+      id: q.id,
+      question: q.question,
+      whyThisMatters: q.whyThisMatters,
+      relatedAssumptionIds: q.relatedAssumptionIds,
+      relatedMechanismIds: q.relatedMechanismIds,
+      relatedRiskIds: q.relatedRiskIds,
+      answerability: q.answerability,
+    });
+  }
+
+  // Check caseSummary
+  const cs = obj.caseSummary;
+  if (!cs || typeof cs !== 'object') return null;
+  if (typeof cs.thesisSummary !== 'string') return null;
+  if (!Array.isArray(cs.strongestSupportedMechanisms)) return null;
+  if (!Array.isArray(cs.mostImportantUnprovenAssumptions)) return null;
+  if (!Array.isArray(cs.thesisBottlenecks)) return null;
+  if (!Array.isArray(cs.materialRisks)) return null;
+  if (!Array.isArray(cs.highestLeverageFounderActions)) return null;
+
+  return {
+    investmentThesis: {
+      problem: t.problem,
+      targetCustomer: t.targetCustomer,
+      wedge: t.wedge,
+      valueCreation: t.valueCreation,
+      distribution: t.distribution,
+      monetization: t.monetization,
+      growth: t.growth,
+      marketExpansion: t.marketExpansion,
+      defensibility: t.defensibility,
+      teamAdvantage: t.teamAdvantage,
+      capitalPath: t.capitalPath,
+      summary: t.summary,
+      statedThesis: t.statedThesis,
+      reconstructedThesis: t.reconstructedThesis,
+      sourceEvidenceIds: Array.isArray(t.sourceEvidenceIds) ? t.sourceEvidenceIds : [],
+      inferredComponents: Array.isArray(t.inferredComponents) ? t.inferredComponents : [],
+      unresolvedComponents: Array.isArray(t.unresolvedComponents) ? t.unresolvedComponents : [],
+    },
+    mechanisms,
+    whatMustBeTrue,
+    dependencies,
+    risks,
+    contradictions,
+    unresolvedQuestions,
+    caseSummary: {
+      thesisSummary: cs.thesisSummary,
+      strongestSupportedMechanisms: cs.strongestSupportedMechanisms,
+      mostImportantUnprovenAssumptions: cs.mostImportantUnprovenAssumptions,
+      thesisBottlenecks: cs.thesisBottlenecks,
+      materialRisks: cs.materialRisks,
+      highestLeverageFounderActions: cs.highestLeverageFounderActions,
+    },
+  };
 }
 
 /**
@@ -302,17 +562,18 @@ export function buildCanonicalEvidenceCorpusReferences(
   }
 
   if (Array.isArray(slideEvidence)) {
-    for (const se of slideEvidence) {
+    slideEvidence.forEach((se, idx) => {
       const txt = se.textContent || se.extractedText || se.exactText;
-      if (typeof se.slideNumber === 'number' && se.slideNumber > 0 && txt && txt.trim().length > 0) {
+      const slideNum = typeof se.slideNumber === 'number' && se.slideNumber > 0 ? se.slideNumber : idx + 1;
+      if (txt && txt.trim().length > 0) {
         addRef({
-          id: `slide:${se.slideNumber}:text`,
+          id: `slide:${slideNum}:text`,
           sourceType: 'slide_text',
           statement: txt.trim(),
-          slideNumber: se.slideNumber,
+          slideNumber: slideNum,
         });
       }
-    }
+    });
   }
 
   return refs;
@@ -436,7 +697,7 @@ export function deriveSuggestedFounderAction(
 /**
  * Reconstructs the Causal Investment Thesis from deck facts and context without generic defaults.
  */
-function reconstructInvestmentThesis(
+export function reconstructInvestmentThesis(
   profile: StartupProfile | null,
   context: CompanyEvaluationContext | null,
   corpusRefs?: InvestmentEvidenceReference[]
@@ -459,14 +720,24 @@ function reconstructInvestmentThesis(
       ? context.businessModel.primaryArchetype
       : undefined;
 
+  const raiseVal = profile?.fundraising?.amountBeingRaised?.rawValue;
+  const runwayVal = profile?.fundraising?.runway?.rawValue;
+
   const sourceEvidenceIds: string[] = [];
   const inferredComponents: string[] = [];
   const unresolvedComponents: string[] = [];
 
   if (corpusRefs) {
+    const thesisKeywords = [prob, sol, icp, gtmVal, acvVal, mktVal, arrVal, teamVal, raiseVal]
+      .filter((v): v is string => Boolean(v) && v!.trim().length > 0)
+      .map((v) => v.toLowerCase());
+
     for (const ref of corpusRefs) {
       if (ref.sourceType === 'profile' || ref.sourceType === 'claim') {
-        sourceEvidenceIds.push(ref.id);
+        const stmtLower = ref.statement.toLowerCase();
+        if (thesisKeywords.some((kw) => stmtLower.includes(kw) || kw.includes(stmtLower))) {
+          sourceEvidenceIds.push(ref.id);
+        }
       }
     }
   }
@@ -512,8 +783,6 @@ function reconstructInvestmentThesis(
     ? sanitizeText(`Reconstructed thesis: ${reconstructedThesis}`)
     : 'Evidence is insufficient to reconstruct a supported causal investment thesis.';
 
-  const raiseVal = profile?.fundraising?.amountBeingRaised?.rawValue;
-  const runwayVal = profile?.fundraising?.runway?.rawValue;
   let capitalPath = 'Capital path not established by current deck evidence.';
   if (raiseVal || runwayVal) {
     capitalPath = sanitizeText(
@@ -743,7 +1012,7 @@ function constructWhatMustBeTrue(
 
   // 1. Problem Severity & Urgency
   const probRaw = profile?.problemSolution?.problemStatement?.rawValue;
-  if (probRaw) {
+  if (probRaw || claimMap?.claims?.length || profile) {
     const hasQuantifiedPain = Boolean(
       profile?.problemSolution?.problemStatement?.evidence?.some((e) => e.exactText && /\d+/.test(e.exactText)) ||
       profile?.importantFacts?.some((f) => f.fact && f.fact.toLowerCase().includes('problem') && /\d+/.test(f.fact))
@@ -760,7 +1029,7 @@ function constructWhatMustBeTrue(
       evidenceQuality: hasQuantifiedPain ? 'customer_quoted' : 'founder_assertion',
       supportingClaimIds: [],
       supportingSlideNumbers: [],
-      supportingFacts: probEvIds.length > 0 ? [probRaw] : [],
+      supportingFacts: probRaw && probEvIds.length > 0 ? [probRaw] : [],
       supportingEvidenceIds: probEvIds,
       contradictingClaimIds: [],
       contradictingSlideNumbers: [],
@@ -784,7 +1053,14 @@ function constructWhatMustBeTrue(
     gtmStatement = 'Channel partners achieve repeatable deal flow and quota attainment';
   }
 
-  if (expectations?.expectations?.['salesRepeatability']?.status !== 'NOT_APPLICABLE') {
+  const hasGtmEvidence = Boolean(
+    profile?.goToMarket?.salesMotion?.rawValue ||
+    profile?.goToMarket?.acquisitionChannels?.rawValue ||
+    profile?.goToMarket?.distributionStrategy?.rawValue ||
+    corpusRefs.some((r) => /sales|channel|acquisition|distribution|gtm|go-to-market/i.test(r.statement))
+  );
+
+  if (hasGtmEvidence && expectations?.expectations?.['salesRepeatability']?.status !== 'NOT_APPLICABLE') {
     const gtmEvIds = findEvIds('sales').concat(findEvIds('channel')).concat(findEvIds('acquisition'));
     const gtmStatus =
       context?.functionalMaturity.distributionMaturity === 'repeatable_channels'
@@ -938,10 +1214,14 @@ function constructWhatMustBeTrue(
   // 6. Deeptech Technical Proof Rule
   if (isDeeptechOrHardware) {
     const hasTechnicalProof = Boolean(
-      profile?.technology?.proprietaryClaims?.rawValue ||
-      corpusRefs.some((r) => /benchmark|patent|lab test|pilot test|field test|validation/i.test(r.statement))
+      corpusRefs.some((r) =>
+        /benchmark|lab test|pilot test|field test|third-party validation|certification|technical milestone/i.test(r.statement)
+      )
     );
-    const techEvIds = findEvIds('patent').concat(findEvIds('benchmark')).concat(findEvIds('technology'));
+    const techEvIds = findEvIds('benchmark')
+      .concat(findEvIds('lab test'))
+      .concat(findEvIds('pilot test'))
+      .concat(findEvIds('field test'));
     const techStatus = hasTechnicalProof ? 'partially_supported' : 'asserted_only';
 
     items.push({
@@ -1008,7 +1288,8 @@ function constructWhatMustBeTrue(
  */
 function constructDependencies(
   whatMustBeTrue: WhatMustBeTrue[],
-  mechanisms: InvestmentCaseMechanism[]
+  mechanisms: InvestmentCaseMechanism[],
+  profile: StartupProfile | null
 ): InvestmentCaseDependency[] {
   const deps: InvestmentCaseDependency[] = [];
   const nodeIds = new Set<string>([
@@ -1060,7 +1341,10 @@ function constructDependencies(
     );
   }
 
-  if (nodeIds.has('wmbt_gtm_repeatability') && nodeIds.has('mech_monetization')) {
+  // Only create GTM -> monetization edge if the monetization model explicitly depends on distribution mechanism
+  const gtmTextLower = (profile?.goToMarket?.salesMotion?.rawValue || profile?.goToMarket?.distributionStrategy?.rawValue || '').toLowerCase();
+  const isDistributionMonetization = gtmTextLower.includes('self-serve') || gtmTextLower.includes('channel') || gtmTextLower.includes('marketplace') || gtmTextLower.includes('freemium');
+  if (isDistributionMonetization && nodeIds.has('wmbt_gtm_repeatability') && nodeIds.has('mech_monetization')) {
     addDep(
       'dep_gtm_to_monetization',
       'wmbt_gtm_repeatability',
@@ -1068,17 +1352,6 @@ function constructDependencies(
       'enables',
       'critical',
       'Distribution repeatability is required to scale unit monetization'
-    );
-  }
-
-  if (nodeIds.has('wmbt_gtm_repeatability') && nodeIds.has('mech_retention')) {
-    addDep(
-      'dep_gtm_to_retention',
-      'wmbt_gtm_repeatability',
-      'mech_retention',
-      'enables',
-      'high',
-      'Repeatable customer acquisition channels feed retention cohort pipelines'
     );
   }
 
@@ -1205,7 +1478,8 @@ function constructRisks(
   profile: StartupProfile | null,
   context: CompanyEvaluationContext | null,
   diagnostics: DeckDiagnostics | null,
-  whatMustBeTrue: WhatMustBeTrue[]
+  whatMustBeTrue: WhatMustBeTrue[],
+  corpusRefs?: InvestmentEvidenceReference[]
 ): InvestmentCaseRisk[] {
   if (!profile && !diagnostics?.contradictions?.length) return [];
 
@@ -1244,16 +1518,25 @@ function constructRisks(
     });
   }
 
-  const growthVal = profile?.traction?.growthRates?.rawValue || profile?.traction?.ARR?.rawValue;
+  const growthRateText = profile?.traction?.growthRates?.rawValue || '';
+  const hasExplicitGrowthClaim = Boolean(
+    growthRateText ||
+    (corpusRefs && corpusRefs.some((r) => /growth|mom|yoy|doubled|tripled|scaling|growth rate/i.test(r.statement)))
+  );
   const retVal = profile?.traction?.retentionMetrics?.rawValue || profile?.traction?.churn?.rawValue;
-  if (growthVal && !retVal) {
+
+  if (hasExplicitGrowthClaim && !retVal) {
     const archetype = context?.businessModel?.primaryArchetype;
-    const targetWmbtId =
-      archetype === 'consumer'
-        ? 'wmbt_consumer_retention'
-        : archetype === 'marketplace'
-        ? 'wmbt_marketplace_liquidity'
-        : 'wmbt_saas_retention';
+    let targetWmbtId: string | undefined;
+    if (archetype === 'consumer') {
+      targetWmbtId = 'wmbt_consumer_retention';
+    } else if (archetype === 'marketplace') {
+      targetWmbtId = 'wmbt_marketplace_liquidity';
+    } else if (archetype === 'b2b_saas' || archetype === 'enterprise_software' || archetype === 'smb_software') {
+      targetWmbtId = 'wmbt_saas_retention';
+    } else {
+      targetWmbtId = undefined;
+    }
 
     risks.push({
       id: 'risk_unproven_durability',
@@ -1266,9 +1549,9 @@ function constructRisks(
       whyItMatters: sanitizeText(
         'Growth in early periods without cohort retention proof leaves revenue durability and customer lifetime value unverified.'
       ),
-      supportingEvidence: [growthVal].filter(Boolean),
+      supportingEvidence: [growthRateText || 'Explicit growth metric'].filter(Boolean),
       contradictingEvidence: [],
-      relatedAssumptionIds: whatMustBeTrue.some((w) => w.id === targetWmbtId) ? [targetWmbtId] : [],
+      relatedAssumptionIds: targetWmbtId && whatMustBeTrue.some((w) => w.id === targetWmbtId) ? [targetWmbtId] : [],
       relatedMechanismIds: ['mech_retention'],
       severity: stage === 'series_a' ? 'critical' : 'material',
       confidence: 'high',
@@ -1604,9 +1887,9 @@ export function reconstructInvestmentCase(
     validClaimIds,
     corpusRefs
   );
-  const dependencies = constructDependencies(rawWmbt, mechanisms);
+  const dependencies = constructDependencies(rawWmbt, mechanisms, profile);
   const whatMustBeTrue = deriveThesisBottlenecks(rawWmbt, dependencies, mechanisms, evaluationContext, profile);
-  const risks = constructRisks(profile, evaluationContext, diagnostics, whatMustBeTrue);
+  const risks = constructRisks(profile, evaluationContext, diagnostics, whatMustBeTrue, corpusRefs);
   const contradictions = constructContradictions(diagnostics);
   const questions = constructUnresolvedQuestions(whatMustBeTrue, risks);
   const summary = constructSummary(thesis, mechanisms, whatMustBeTrue, risks);

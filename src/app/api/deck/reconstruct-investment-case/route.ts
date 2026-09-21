@@ -5,6 +5,7 @@ import {
   reconstructInvestmentCase,
   validateAndCleanseInvestmentCase,
   buildCanonicalEvidenceCorpusReferences,
+  normalizeInvestmentCaseRuntime,
 } from '@/lib/deck/investment-case-engine';
 import {
   InvestmentCase,
@@ -89,7 +90,19 @@ const investmentCaseSchema: Schema = {
           contradictingEvidenceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
           confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
         },
-        required: ['id', 'category', 'statement', 'importance', 'evidenceStatus'],
+        required: [
+          'id',
+          'category',
+          'statement',
+          'importance',
+          'evidenceStatus',
+          'supportingClaimIds',
+          'supportingSlideNumbers',
+          'supportingFacts',
+          'contradictingClaimIds',
+          'contradictingSlideNumbers',
+          'confidence',
+        ],
       },
     },
     whatMustBeTrue: {
@@ -121,7 +134,22 @@ const investmentCaseSchema: Schema = {
           bottleneckReason: { type: Type.STRING },
           confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
         },
-        required: ['id', 'statement', 'importance', 'evidenceStatus', 'isThesisBottleneck'],
+        required: [
+          'id',
+          'statement',
+          'category',
+          'importance',
+          'assumptionOrigin',
+          'evidenceStatus',
+          'evidenceQuality',
+          'supportingClaimIds',
+          'supportingSlideNumbers',
+          'supportingFacts',
+          'contradictingClaimIds',
+          'contradictingSlideNumbers',
+          'isThesisBottleneck',
+          'confidence',
+        ],
       },
     },
     dependencies: {
@@ -165,7 +193,20 @@ const investmentCaseSchema: Schema = {
           severity: { type: Type.STRING, enum: [...RISK_SEVERITIES] },
           confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
         },
-        required: ['id', 'title', 'description', 'whyItMatters', 'severity'],
+        required: [
+          'id',
+          'category',
+          'title',
+          'description',
+          'riskType',
+          'whyItMatters',
+          'supportingEvidence',
+          'contradictingEvidence',
+          'relatedAssumptionIds',
+          'relatedMechanismIds',
+          'severity',
+          'confidence',
+        ],
       },
     },
     contradictions: {
@@ -202,7 +243,15 @@ const investmentCaseSchema: Schema = {
             enum: [...QUESTION_ANSWERABILITIES],
           },
         },
-        required: ['id', 'question', 'whyThisMatters', 'answerability'],
+        required: [
+          'id',
+          'question',
+          'whyThisMatters',
+          'relatedAssumptionIds',
+          'relatedMechanismIds',
+          'relatedRiskIds',
+          'answerability',
+        ],
       },
     },
     caseSummary: {
@@ -358,9 +407,14 @@ Reconstruct the Causal Investment Case according to the JSON schema.`;
       throw new Error('Gemini API returned an empty response for investment case reconstruction.');
     }
 
-    const rawCase: InvestmentCase = JSON.parse(responseText);
+    const parsedJson = JSON.parse(responseText);
+    const normalizedCase = normalizeInvestmentCaseRuntime(parsedJson);
+    if (!normalizedCase) {
+      throw new Error('Gemini API response failed InvestmentCase runtime schema normalization.');
+    }
+
     const cleansedCase = validateAndCleanseInvestmentCase(
-      rawCase,
+      normalizedCase,
       profile || null,
       claimMap || null,
       diagnostics || null,

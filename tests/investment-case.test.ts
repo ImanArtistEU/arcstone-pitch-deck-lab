@@ -6,7 +6,9 @@ import { buildCompanyEvaluationContext } from '@/lib/deck/evaluation-context';
 import { buildEvaluationExpectations } from '@/lib/deck/evaluation-expectations';
 import {
   reconstructInvestmentCase,
+  reconstructInvestmentThesis,
   validateAndCleanseInvestmentCase,
+  normalizeInvestmentCaseRuntime,
   sanitizeText,
   buildCanonicalEvidenceCorpusReferences,
   isStringSupportedByCorpus,
@@ -516,7 +518,7 @@ describe('Batch 5B - Investment Case Reconstruction & What-Must-Be-True Engine T
   it('41. GTM assumption is marked as thesis bottleneck when downstream dependency threshold is met', () => {
     const profile = {
       problemSolution: { problemStatement: pf('Expensive workflow') },
-      goToMarket: { salesMotion: pf('Founder-led sales') },
+      goToMarket: { salesMotion: pf('Product-led self-serve conversion') },
       businessModel: { pricingValues: pf('$50k subscription') },
     } as unknown as StartupProfile;
     const ic = reconstructInvestmentCase(profile, null, null, null, null);
@@ -921,4 +923,245 @@ describe('Batch 5B - Investment Case Reconstruction & What-Must-Be-True Engine T
     expect(cleansed.whatMustBeTrue[0].supportingEvidenceIds).toEqual([]);
     expect(cleansed.whatMustBeTrue[0].supportingFacts).toEqual([]);
   });
+
+  // 71-86. Final Correctness Hotfix Regression Tests
+  it('71. normalizeInvestmentCaseRuntime validates valid object and rejects null or non-objects', () => {
+    expect(normalizeInvestmentCaseRuntime(null)).toBeNull();
+    expect(normalizeInvestmentCaseRuntime(undefined)).toBeNull();
+    expect(normalizeInvestmentCaseRuntime('not_an_object')).toBeNull();
+    expect(normalizeInvestmentCaseRuntime(123)).toBeNull();
+  });
+
+  it('72. normalizeInvestmentCaseRuntime rejects objects missing required thesis fields', () => {
+    const invalidCase = {
+      investmentThesis: { problem: 'p' }, // Missing targetCustomer, wedge, etc.
+      mechanisms: [],
+      whatMustBeTrue: [],
+      dependencies: [],
+      risks: [],
+      contradictions: [],
+      unresolvedQuestions: [],
+      caseSummary: { thesisSummary: 'sum' },
+    };
+    expect(normalizeInvestmentCaseRuntime(invalidCase)).toBeNull();
+  });
+
+  it('73. normalizeInvestmentCaseRuntime rejects invalid enums in mechanisms', () => {
+    const invalidEnumCase = {
+      investmentThesis: {
+        problem: 'p',
+        targetCustomer: 'c',
+        wedge: 'w',
+        valueCreation: 'v',
+        distribution: 'd',
+        monetization: 'm',
+        growth: 'g',
+        marketExpansion: 'me',
+        defensibility: 'def',
+        teamAdvantage: 't',
+        capitalPath: 'cp',
+        summary: 'sum',
+        statedThesis: 'st',
+        reconstructedThesis: 'rt',
+      },
+      mechanisms: [
+        {
+          id: 'mech_1',
+          category: 'invalid_category_enum',
+          statement: 'stmt',
+          importance: 'critical',
+          evidenceStatus: 'supported',
+          supportingClaimIds: [],
+          supportingSlideNumbers: [],
+          supportingFacts: [],
+          contradictingClaimIds: [],
+          contradictingSlideNumbers: [],
+          confidence: 'high',
+        },
+      ],
+      whatMustBeTrue: [],
+      dependencies: [],
+      risks: [],
+      contradictions: [],
+      unresolvedQuestions: [],
+      caseSummary: {
+        thesisSummary: 'sum',
+        strongestSupportedMechanisms: [],
+        mostImportantUnprovenAssumptions: [],
+        thesisBottlenecks: [],
+        materialRisks: [],
+        highestLeverageFounderActions: [],
+      },
+    };
+    expect(normalizeInvestmentCaseRuntime(invalidEnumCase)).toBeNull();
+  });
+
+  it('74. Deeptech proprietary claims or patents alone do NOT trigger partially_supported status for technical proof', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('Deeptech quantum chip') },
+      technology: { proprietaryClaims: pf('Patented quantum architecture') },
+    } as unknown as StartupProfile;
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    const ic = reconstructInvestmentCase(profile, null, null, context, null);
+
+    const item = ic.whatMustBeTrue.find((w) => w.id === 'wmbt_deeptech_technical_proof');
+    expect(item).toBeDefined();
+    expect(item?.evidenceStatus).toBe('asserted_only');
+  });
+
+  it('75. Deeptech field test or lab benchmark triggers partially_supported status', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('Deeptech quantum chip') },
+    } as unknown as StartupProfile;
+    const context = buildCompanyEvaluationContext(profile, null, null);
+
+    const slideEv = [{ textContent: 'Achieved 99.9% fidelity in lab benchmark test verification' }];
+    const ic = reconstructInvestmentCase(profile, null, null, context, null, slideEv);
+
+    const item = ic.whatMustBeTrue.find((w) => w.id === 'wmbt_deeptech_technical_proof');
+    expect(item).toBeDefined();
+    expect(item?.evidenceStatus).toBe('partially_supported');
+  });
+
+  it('76. Absence of GTM data omits wmbt_gtm_repeatability WMBT', () => {
+    const profile = {
+      problemSolution: { problemStatement: pf('Costly workflow') },
+    } as unknown as StartupProfile;
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    const ic = reconstructInvestmentCase(profile, null, null, context, null);
+
+    const gtmItem = ic.whatMustBeTrue.find((w) => w.id === 'wmbt_gtm_repeatability');
+    expect(gtmItem).toBeUndefined();
+  });
+
+  it('77. Presence of GTM data generates wmbt_gtm_repeatability WMBT', () => {
+    const profile = {
+      problemSolution: { problemStatement: pf('Costly workflow') },
+      goToMarket: { salesMotion: pf('Direct enterprise sales motion') },
+    } as unknown as StartupProfile;
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    const ic = reconstructInvestmentCase(profile, null, null, context, null);
+
+    const gtmItem = ic.whatMustBeTrue.find((w) => w.id === 'wmbt_gtm_repeatability');
+    expect(gtmItem).toBeDefined();
+  });
+
+  it('78. Universal GTM -> retention dependency is removed from dependency graph', () => {
+    const profile = {
+      goToMarket: { salesMotion: pf('Direct enterprise sales') },
+      businessModel: { revenueModel: pf('B2B SaaS') },
+    } as unknown as StartupProfile;
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    const ic = reconstructInvestmentCase(profile, null, null, context, null);
+
+    const gtmRetDep = ic.dependencies.find((d) => d.id === 'dep_gtm_to_retention');
+    expect(gtmRetDep).toBeUndefined();
+  });
+
+  it('79. GTM -> monetization dependency created only for self-serve/channel/marketplace distribution', () => {
+    const profileDirect = {
+      goToMarket: { salesMotion: pf('Direct enterprise sales') },
+    } as unknown as StartupProfile;
+    const icDirect = reconstructInvestmentCase(profileDirect, null, null, null, null);
+    expect(icDirect.dependencies.find((d) => d.id === 'dep_gtm_to_monetization')).toBeUndefined();
+
+    const profileSelfServe = {
+      goToMarket: { salesMotion: pf('Product-led self-serve conversion') },
+    } as unknown as StartupProfile;
+    const icSelfServe = reconstructInvestmentCase(profileSelfServe, null, null, null, null);
+    expect(icSelfServe.dependencies.find((d) => d.id === 'dep_gtm_to_monetization')).toBeDefined();
+  });
+
+  it('80. Founder-led GTM with fewer than 2 downstream edges is NOT marked as thesis bottleneck', () => {
+    const profile = {
+      goToMarket: { salesMotion: pf('Founder-led sales motion') },
+    } as unknown as StartupProfile;
+    const ic = reconstructInvestmentCase(profile, null, null, null, null);
+
+    const gtmItem = ic.whatMustBeTrue.find((w) => w.id === 'wmbt_gtm_repeatability');
+    if (gtmItem) {
+      const downstream = ic.dependencies.filter((d) => d.sourceId === 'wmbt_gtm_repeatability').length;
+      expect(downstream).toBeLessThan(2);
+      expect(gtmItem.isThesisBottleneck).toBe(false);
+    }
+  });
+
+  it('81. WMBT item with 2+ downstream edges and deficient status IS marked as thesis bottleneck', () => {
+    const profile = {
+      problemSolution: { problemStatement: pf('Costly workflow') },
+    } as unknown as StartupProfile;
+    const ic = reconstructInvestmentCase(profile, null, null, null, null);
+
+    const probItem = ic.whatMustBeTrue.find((w) => w.id === 'wmbt_problem_urgency');
+    if (probItem) {
+      const downstream = ic.dependencies.filter((d) => d.sourceId === 'wmbt_problem_urgency').length;
+      if (downstream >= 2) {
+        expect(probItem.isThesisBottleneck).toBe(true);
+        expect(probItem.bottleneckReason).toBeTruthy();
+      }
+    }
+  });
+
+  it('82. Revenue durability risk is NOT triggered by ARR alone without explicit growth claims/metrics', () => {
+    const profile = {
+      traction: { ARR: pf('$500k ARR') },
+    } as unknown as StartupProfile;
+    const ic = reconstructInvestmentCase(profile, null, null, null, null);
+
+    const durabilityRisk = ic.risks.find((r) => r.id === 'risk_unproven_durability');
+    expect(durabilityRisk).toBeUndefined();
+  });
+
+  it('83. Revenue durability risk IS triggered when explicit growth rates exist without retention data', () => {
+    const profile = {
+      traction: { growthRates: pf('300% YoY ARR growth') },
+    } as unknown as StartupProfile;
+    const ic = reconstructInvestmentCase(profile, null, null, null, null);
+
+    const durabilityRisk = ic.risks.find((r) => r.id === 'risk_unproven_durability');
+    expect(durabilityRisk).toBeDefined();
+    expect(durabilityRisk?.riskType).toBe('unproven_durability');
+  });
+
+  it('84. Revenue durability risk does NOT set relatedAssumptionIds to SaaS retention for deeptech archetype', () => {
+    const profile = {
+      problemSolution: { productDescription: pf('Deeptech robotics platform') },
+      traction: { growthRates: pf('200% YoY growth') },
+    } as unknown as StartupProfile;
+    const context = buildCompanyEvaluationContext(profile, null, null);
+    const ic = reconstructInvestmentCase(profile, null, null, context, null);
+
+    const durabilityRisk = ic.risks.find((r) => r.id === 'risk_unproven_durability');
+    expect(durabilityRisk).toBeDefined();
+    expect(durabilityRisk?.relatedAssumptionIds).not.contains('wmbt_saas_retention');
+  });
+
+  it('85. reconstructInvestmentThesis filters sourceEvidenceIds to thesis-relevant references only', () => {
+    const profile = {
+      problemSolution: { problemStatement: pf('Inefficient claims processing') },
+    } as unknown as StartupProfile;
+
+    const corpusRefs = [
+      { id: 'profile:prob', sourceType: 'profile' as const, statement: 'Inefficient claims processing' },
+      { id: 'profile:unrelated', sourceType: 'profile' as const, statement: 'Random office location in Berlin' },
+    ];
+
+    const thesis = reconstructInvestmentThesis(profile, null, corpusRefs);
+    expect(thesis.sourceEvidenceIds).contains('profile:prob');
+    expect(thesis.sourceEvidenceIds).not.contains('profile:unrelated');
+  });
+
+  it('86. normalizeInvestmentCaseRuntime correctly parses and validates clean reconstructed case', () => {
+    const profile = {
+      problemSolution: { problemStatement: pf('Inefficient claims processing') },
+      goToMarket: { salesMotion: pf('Direct enterprise sales') },
+    } as unknown as StartupProfile;
+
+    const ic = reconstructInvestmentCase(profile, null, null, null, null);
+    const normalized = normalizeInvestmentCaseRuntime(ic);
+
+    expect(normalized).not.toBeNull();
+    expect(normalized?.investmentThesis.problem).includes('Inefficient claims processing');
+  });
 });
+
